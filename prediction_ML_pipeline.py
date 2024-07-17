@@ -11,8 +11,10 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.compose import ColumnTransformer
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
+import warnings
 
 
+warnings.filterwarnings('ignore')
 
 # class DataPreprocessor(BaseEstimator, TransformerMixin):
 #     def __init__(self):
@@ -53,7 +55,7 @@ def data_preprocessing(df_m, df_ob, ticker_name=None):
 
     # Set up header for message df and OB df
     M_header = ['time', 'event_type', 'order_ID', 'size', 'price', 'direction', 'ticker']
-
+    df_m = df_m.dropna(axis=1, how='all')
     df_m.columns = M_header
 
     OB_header = []
@@ -197,8 +199,7 @@ def prediction_feature(df_m_mh, df_ob_mh, labelled=False, standardise=True):
     # Extract df for features and drop irrelevant features
     features_df = df_m_mh[df_m_mh['event_type'] == 5]
     features_df.drop(columns=['event_type', 'order_ID', 'price', 'direction', 'midprice'], inplace=True)
-
-    numerical_columns = ['size', 'OFI', 'agg_ratio']
+    numerical_columns = ['size', 'ofi', 'agg_ratio']
 
     # Standardise numerical columns
     if standardise:
@@ -224,18 +225,24 @@ def prediction_feature(df_m_mh, df_ob_mh, labelled=False, standardise=True):
 
 
 def train_and_evaluate_model(classifier, grid, df_ob_labelled_lst, df_m_labelled_lst, tickers_train,
-                             df_ob_predict_lst, df_m_predict_lst, tickers_pred, standardise=True):
+                             df_ob_predict_lst, df_m_predict_lst, tickers_pred):
     '''Perform model training and classification'''
 
     # Set up training data
     labelled_features_lst = []
     labelled_output_lst = []
+    labelled_m_lst = []
+    labelled_ob_lst = []
 
     for ticker, df_m, df_ob in zip(tickers_train, df_m_labelled_lst, df_ob_labelled_lst):
         df_m_mh, df_ob_mh = data_preprocessing(df_m, df_ob, ticker_name=ticker)
         features_hid, output_hid = prediction_feature(df_m_mh, df_ob_mh, labelled=True, standardise=True)
+        # Either standardise here or within function - see which one works best
+
         labelled_features_lst.append(features_hid)
         labelled_output_lst.append(output_hid)
+        labelled_m_lst.append(df_m_mh)
+        labelled_ob_lst.append(df_ob_mh)
     
     labelled_features = pd.concat(labelled_features_lst)
     labelled_output = pd.concat(labelled_output_lst)
@@ -257,11 +264,15 @@ def train_and_evaluate_model(classifier, grid, df_ob_labelled_lst, df_m_labelled
 
     # Set up predict data
     pred_features_lst = []
+    pred_m_lst = []
+    pred_ob_lst = []
 
     for ticker, df_m, df_ob in zip(tickers_pred, df_m_predict_lst, df_ob_predict_lst):
         df_m_mh, df_ob_mh = data_preprocessing(df_m, df_ob, ticker_name=ticker)
         features_hid = prediction_feature(df_m_mh, df_ob_mh, labelled=False, standardise=True)
         pred_features_lst.append(features_hid)
+        pred_m_lst.append(df_m_mh)
+        pred_ob_lst.append(df_ob_mh)
     
     pred_features_df = pd.concat(pred_features_lst)
 
@@ -270,16 +281,38 @@ def train_and_evaluate_model(classifier, grid, df_ob_labelled_lst, df_m_labelled
     train_acc = accuracy_score(y_train_pred, y_train)
     print("Accuracy on the train data:", train_acc)
 
+    # Set the index of the new DataFrame to match y_test
+    y_train_pred_df = pd.DataFrame(y_train_pred, columns=['predicted'])
+    y_train_pred_df.index = y_train.index
+
 
     # Predict and calculate accuracy on the test data
     y_test_pred = best_classifier.predict(X_test)
     test_acc = accuracy_score(y_test_pred, y_test)
     print("Accuracy on the test data:", test_acc)
 
+    # Set the index of the new DataFrame to match y_test
+    y_test_pred_df = pd.DataFrame(y_test_pred, columns=['predicted'])
+    y_test_pred_df.index = y_test.index
+
+
     # Predict unlabelled data
     y_pred = best_classifier.predict(pred_features_df)
+    
+    y_pred_df = pd.DataFrame(y_pred, columns=['predicted'])
+    y_pred_df.index = pred_features_df.index
 
-    return y_pred, best_classifier
+    features_dict = {'labelled': labelled_features,
+                     'unlabelled': pred_features_df}
+    
+    prediction_dict = {'train': y_train_pred_df,
+                       'test': y_test_pred_df,
+                       'pred': y_pred_df}
+    
+    df_labelled_dict = {ticker: (df1, df2) for ticker, df1, df2 in zip(tickers_train, labelled_m_lst, labelled_ob_lst)}
+    df_predict_dict = {ticker: (df1, df2) for ticker, df1, df2 in zip(tickers_pred, pred_m_lst, pred_ob_lst)}
+
+    return df_labelled_dict, df_predict_dict, features_dict, prediction_dict, best_classifier
 
 
 
