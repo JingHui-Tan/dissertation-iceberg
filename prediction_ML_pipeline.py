@@ -107,6 +107,10 @@ def data_preprocessing(df_m, df_ob, ticker_name=None):
 
 
 
+
+
+
+
 def direction_adjacent_event(df, event_type, order='prev'):
     """
     Get direction of previous or next event_type.
@@ -160,6 +164,8 @@ def trade_sentiment(df):
 
 
 
+
+
 def prediction_feature(df_m_mh, df_ob_mh, labelled=False, standardise=True):
 
     '''
@@ -196,7 +202,7 @@ def prediction_feature(df_m_mh, df_ob_mh, labelled=False, standardise=True):
     df_m_mh['hid_at_bid'] = (df_m_mh['price'] == df_ob_mh['bid_price_1']).astype(int) 
     df_m_mh['hid_at_ask'] = (df_m_mh['price'] == df_ob_mh['ask_price_1']).astype(int)
 
-    # Extract df for features and drop irrelevant features
+    # Extract event type 5 df and features, drop irrelevant features
     features_df = df_m_mh[df_m_mh['event_type'] == 5]
     features_df.drop(columns=['event_type', 'order_ID', 'price', 'direction', 'midprice'], inplace=True)
     numerical_columns = ['size', 'ofi', 'agg_ratio']
@@ -222,6 +228,27 @@ def prediction_feature(df_m_mh, df_ob_mh, labelled=False, standardise=True):
     
     return features_df # X_test
 
+
+
+
+
+
+def hid_outside_spread_tag(pred_features_df, y_pred_df):
+    '''Tag direction for hidden orders outside BA spread'''
+    y_pred_df = y_pred_df.merge(pred_features_df['agg_ratio'], left_index=True, right_index=True)
+
+    # Tag buy hidden liquidity execution
+    y_pred_df.loc[y_pred_df['agg_ratio']<=0, "pred_dir"] = 1
+    y_pred_df.loc[y_pred_df['agg_ratio']<=0, "pred_prob"] = 1
+
+    # Tag sell hidden liquidity execution
+    y_pred_df.loc[y_pred_df['agg_ratio']>=1, "pred_dir"] = -1
+    y_pred_df.loc[y_pred_df['agg_ratio']>=1, "pred_prob"] = 0
+
+    # Drop agg_ratio column
+    y_pred_df.drop(columns=['agg_ratio'], inplace=True)
+
+    return y_pred_df
 
 
 def train_and_evaluate_model(classifier, grid, df_ob_labelled_lst, df_m_labelled_lst, tickers_train,
@@ -279,28 +306,37 @@ def train_and_evaluate_model(classifier, grid, df_ob_labelled_lst, df_m_labelled
     # Predict and calculate accuracy on the train data
     y_train_pred = best_classifier.predict(X_train)
     train_acc = accuracy_score(y_train_pred, y_train)
+    y_train_prob = best_classifier.predict_proba(X_train)[:, 1]
     print("Accuracy on the train data:", train_acc)
 
     # Set the index of the new DataFrame to match y_test
-    y_train_pred_df = pd.DataFrame(y_train_pred, columns=['predicted'])
+    y_train_pred_df = pd.DataFrame({'pred_dir': y_train_pred,
+                                    'pred_prob': y_train_prob})
     y_train_pred_df.index = y_train.index
 
 
     # Predict and calculate accuracy on the test data
     y_test_pred = best_classifier.predict(X_test)
     test_acc = accuracy_score(y_test_pred, y_test)
+    y_test_prob = best_classifier.predict_proba(X_test)[:, 1]
     print("Accuracy on the test data:", test_acc)
 
     # Set the index of the new DataFrame to match y_test
-    y_test_pred_df = pd.DataFrame(y_test_pred, columns=['predicted'])
+    y_test_pred_df = pd.DataFrame({'pred_dir': y_test_pred,
+                                   'pred_prob': y_test_prob})
     y_test_pred_df.index = y_test.index
 
 
     # Predict unlabelled data
     y_pred = best_classifier.predict(pred_features_df)
-    
-    y_pred_df = pd.DataFrame(y_pred, columns=['predicted'])
+    y_pred_prob = best_classifier.predict_proba(pred_features_df)[:, 1]
+
+    y_pred_df = pd.DataFrame({'pred_dir': y_pred,
+                              'pred_prob': y_pred_prob})
     y_pred_df.index = pred_features_df.index
+
+    # Tag direction of hidden liquidity execution outside of bid-ask spread
+    y_pred_df = hid_outside_spread_tag(pred_features_df, y_pred_df)
 
     features_dict = {'labelled': labelled_features,
                      'unlabelled': pred_features_df}
