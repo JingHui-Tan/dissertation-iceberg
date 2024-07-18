@@ -55,7 +55,7 @@ def data_preprocessing(df_m, df_ob, ticker_name=None):
 
     # Set up header for message df and OB df
     M_header = ['time', 'event_type', 'order_ID', 'size', 'price', 'direction', 'ticker']
-    df_m = df_m.dropna(axis=1, how='all')
+    df_m = df_m.dropna(axis=1, how='any')
     df_m.columns = M_header
 
     OB_header = []
