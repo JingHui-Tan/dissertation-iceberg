@@ -19,6 +19,10 @@ def iceberg_tag(df, ib_delta):
     event_type_4 = df[df['event_type'] == 4]
     event_type_1 = df[df['event_type'] == 1]
 
+    # Sort both DataFrames by datetime
+    event_type_4 = event_type_4.sort_values(by='datetime')
+    event_type_1 = event_type_1.sort_values(by='datetime')
+
     merged = pd.merge_asof(
         event_type_4,
         event_type_1,
@@ -37,87 +41,108 @@ def iceberg_tag(df, ib_delta):
 
 
 
-def order_imbalance(df_full, df_pred=None, delta='30S', type='vis'):
 
-    # Obtain visible order imbalance
-    if type == 'vis':
-        df = df_full[df_full['event_type'] == 4]
-        df['datetime_bins'] = df.index.get_level_values('datetime').ceil(delta)
 
-        # Group by the delta intervals and calculate the sums for each direction
-        grouped = df.groupby('datetime_bins').apply(
-            lambda x: pd.Series({
-                'order_imbalance_vis': (x.loc[x['direction'] == -1, 'size'].sum() - x.loc[x['direction'] == 1, 'size'].sum()) /
-                                (x.loc[x['direction'] == -1, 'size'].sum() + x.loc[x['direction'] == 1, 'size'].sum()),
-                'first_midprice': x['midprice'].iloc[0],
-                'last_midprice': x['midprice'].iloc[-1]
-            })
-        ).reset_index()
-        grouped['order_imbalance_vis'] = grouped['order_imbalance_vis'].fillna(0)   
-
-    # Obtain hidden order imbalance
-    elif type == 'hid':
-        df_hid_trade = df_full[df_full['event_type'] == 5]
-        df_hid_trade['datetime_bins'] = df_hid_trade.index.get_level_values('datetime').ceil(delta)
-
-        # Resetting index to allow for merge on multiindex
-        df_hid_trade_reset = df_hid_trade.reset_index()
-        df_pred_reset = df_pred.reset_index()
-
-        # Merging the DataFrames on the multiindex
-        df_merged = pd.merge(df_hid_trade_reset, df_pred_reset, on=['datetime', 'ticker', 'event_number'])
-
-        # Set the multiindex back if necessary
-        df_merged.set_index(['datetime', 'ticker', 'event_number'], inplace=True)
-
-        grouped = df_merged.groupby('datetime_bins').apply(
-            lambda x: pd.Series({
-                'order_imbalance_hid': (x['size'] * (1 - 2 * x['pred_dir'])).sum() / x['size'].sum(),
-                'first_midprice': x['midprice'].iloc[0],
-                'last_midprice': x['midprice'].iloc[-1]
-            })
-        ).reset_index()
-        
-        grouped['order_imbalance_hid'] = grouped['order_imbalance_hid'].fillna(0)
-
-    else:
-        print("Not Implemented")
-        pass
- 
+def calculate_log_returns(grouped):
     grouped['log_ret'] = np.log(grouped['last_midprice']) - np.log(grouped['first_midprice'])
     grouped['fut_log_ret'] = grouped['log_ret'].shift(-1)
+    return grouped
 
-    # Calculate the 2.5 and 97.5 quantiles
-    lower_quantile = grouped['log_ret'].quantile(0.025)
-    upper_quantile = grouped['log_ret'].quantile(0.975)
-
-    lower_quantile_fut = grouped['fut_log_ret'].quantile(0.025)
-    upper_quantile_fut = grouped['fut_log_ret'].quantile(0.975)
+def filter_quantiles(grouped, column, lower_quantile=0.025, upper_quantile=0.975):
+    lower_bound = grouped[column].quantile(lower_quantile)
+    upper_bound = grouped[column].quantile(upper_quantile)
+    return grouped[(grouped[column] >= lower_bound) & (grouped[column] <= upper_bound)]
 
 
-    # Filter the DataFrame
-    grouped_filtered = grouped[(grouped['log_ret'] >= lower_quantile) & (grouped['log_ret'] <= upper_quantile)]
-    grouped_filtered = grouped_filtered[(grouped_filtered['fut_log_ret'] >= lower_quantile_fut) 
-                               & (grouped_filtered['fut_log_ret'] <= upper_quantile_fut)]
+
+
+def calculate_order_imbalance(df, direction_column, size_column, pred_dir_column=None):
+    if pred_dir_column:
+        return (df[size_column] * (1 - 2 * df[pred_dir_column])).sum() / df[size_column].sum()
+    else:
+        buy_size = df.loc[df[direction_column] == -1, size_column].sum()
+        sell_size = df.loc[df[direction_column] == 1, size_column].sum()
+        return (buy_size - sell_size) / (sell_size + buy_size)
+
+
+
+
+
+def order_imbalance(df_full, df_pred=None, delta='30S', type='vis'):
+    if type == 'vis':
+        df = df_full[df_full['event_type'] == 4]
+    elif type == 'hid':
+        df = df_full[df_full['event_type'] == 5]
+    else:
+        print("Not Implemented")
+        return
+
+    df['datetime_bins'] = df.index.get_level_values('datetime').ceil(delta)
+
+    if type == 'hid':
+        df = pd.merge(df.reset_index(), df_pred.reset_index(), on=['datetime', 'ticker', 'event_number']).set_index(['datetime', 'ticker', 'event_number'])
+
+    grouped = df.groupby('datetime_bins').apply(
+        lambda x: pd.Series({
+            'order_imbalance': calculate_order_imbalance(x, 'direction', 'size', 'pred_dir' if type == 'hid' else None),
+            'first_midprice': x['midprice'].iloc[0],
+            'last_midprice': x['midprice'].iloc[-1]
+        })
+    ).reset_index()
+
+    grouped['order_imbalance'] = grouped['order_imbalance'].fillna(0)
+    grouped = calculate_log_returns(grouped)
+
+    grouped = filter_quantiles(grouped, 'log_ret')
+    grouped = filter_quantiles(grouped, 'fut_log_ret')
     
-    grouped_filtered = grouped_filtered[:-1]
-
-    return grouped_filtered
+    return grouped[:-1]
 
 
 
 def combined_order_imbalance(df_full, df_pred, delta='5min'):
-    # Create combined order_imbalance
     df_vis = order_imbalance(df_full=df_full, delta=delta, type='vis')
     df_hid = order_imbalance(df_full=df_full, df_pred=df_pred, delta=delta, type='hid')
 
-    df_merged = df_vis.merge(df_hid['order_imbalance_hid'], left_index=True, right_index=True)
-    return df_merged
-    
+    return df_vis.merge(df_hid[['datetime_bins', 'order_imbalance']], on='datetime_bins', suffixes=('_vis', '_hid'))
+
+
+
+
+def iceberg_order_imbalance(df_full, df_pred, delta='5min'):
+    ib_delta = '1ms'
+    df = iceberg_tag(df_full, ib_delta)
+    df['datetime_bins'] = df.index.get_level_values('datetime').ceil(delta)
+    grouped = df.groupby('datetime_bins').apply(
+        lambda x: pd.Series({
+            'order_imbalance_vis': calculate_order_imbalance(x[x['iceberg'] == 0], 'direction', 'size'),
+            'order_imbalance_ib': calculate_order_imbalance(x[x['iceberg'] == 1], 'direction', 'size'),
+            'first_midprice': x['midprice'].iloc[0],
+            'last_midprice': x['midprice'].iloc[-1]
+        })
+    ).reset_index()
+
+    grouped['order_imbalance_vis'] = grouped['order_imbalance_vis'].fillna(0)
+    grouped['order_imbalance_ib'] = grouped['order_imbalance_ib'].fillna(0)
+    grouped = calculate_log_returns(grouped)
+
+    grouped = filter_quantiles(grouped, 'log_ret')
+    grouped = filter_quantiles(grouped, 'fut_log_ret')
+
+    df_hid = order_imbalance(df_full=df_full, df_pred=df_pred, delta=delta, type='hid')
+    df_hid.rename(columns={"order_imbalance": "order_imbalance_hid"}, inplace=True)
+
+    return grouped.merge(df_hid[['datetime_bins', 'order_imbalance_hid']], on='datetime_bins')
+
+
+
+
 
 
 def conditional_order_imbalance(hidden=True):
     pass
+
+
 
 
 
@@ -129,7 +154,15 @@ def lm_results(df_full, df_pred, delta_lst, order_type='combined', predictive=Tr
     tvalues_lst = []
 
     for delta in delta_lst:
-        df_merged = combined_order_imbalance(df_full, df_pred, delta=delta)
+        if order_type == 'vis' or order_type == 'hid' or order_type == 'combined':
+            df_merged = combined_order_imbalance(df_full, df_pred, delta=delta)
+
+        elif order_type == 'comb_iceberg':
+            df_merged = iceberg_order_imbalance(df_full, df_pred, delta=delta)
+            lm = smf.ols(formula=f"""{y} ~ order_imbalance_vis + order_imbalance_hid + order_imbalance_ib""", 
+                         data=df_merged).fit()
+            params_lst.append((lm.params[1], lm.params[2], lm.params[3]))
+            tvalues_lst.append((lm.tvalues[1], lm.tvalues[2], lm.tvalues[3]))
 
         if order_type == "vis":
             lm = smf.ols(formula=f"""{y} ~ order_imbalance_vis""", data=df_merged).fit()
@@ -146,7 +179,8 @@ def lm_results(df_full, df_pred, delta_lst, order_type='combined', predictive=Tr
             params_lst.append((lm.params[1], lm.params[2]))
             tvalues_lst.append((lm.tvalues[1], lm.tvalues[2]))
 
-    if order_type == "vis" or order_type == "vis":
+
+    if order_type == "vis" or order_type == "hid":
         return pd.DataFrame({"timeframe": delta_lst, "params": params_lst, "tvalues": tvalues_lst})
 
     elif order_type == "combined":
@@ -157,8 +191,21 @@ def lm_results(df_full, df_pred, delta_lst, order_type='combined', predictive=Tr
             'params_hid': [x[1] for x in params_lst],
             'tvalues_hid': [x[1] for x in tvalues_lst]
         })
-
         return df
+
+
+    elif order_type == 'comb_iceberg':
+        df = pd.DataFrame({
+            'timeframe': delta_lst,
+            'params_vis': [x[0] for x in params_lst],
+            'tvalues_vis': [x[0] for x in tvalues_lst],
+            'params_hid': [x[1] for x in params_lst],
+            'tvalues_hid': [x[1] for x in tvalues_lst],
+            'params_ib': [x[2] for x in params_lst],
+            'tvalues_ib': [x[2] for x in tvalues_lst]
+        })
+        return df
+
 
 
 def diagnostic_plots(lm, y, data):
