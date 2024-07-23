@@ -11,7 +11,7 @@ import statsmodels.formula.api as smf
 
 
 ## Process:
-## We fit order_imbalance and then remove outliers (for log returns)
+## We fit order_imbalance and then remove outliers based on 90% quantile (for log returns and future log returns)
 
 
 def iceberg_tag(df, ib_delta):
@@ -37,7 +37,6 @@ def iceberg_tag(df, ib_delta):
     event_type_4.loc[event_type_4.index.get_level_values('datetime').isin(event_1_within_delta), 'iceberg'] = 1
 
     return event_type_4
-
 
 
 

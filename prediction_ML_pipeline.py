@@ -46,17 +46,30 @@ warnings.filterwarnings('ignore')
 #             return features_df
         
 
+def add_date_ticker(df_m, date, ticker):
+    '''Add date to dataframe'''
 
-def data_preprocessing(df_m, df_ob, ticker_name=None):
-    '''Preprocess message and orderbook dataframe'''
-
-    df_m['ticker'] = ticker_name
-    df_ob['ticker'] = ticker_name
+    df_m['ticker'] = ticker
 
     # Set up header for message df and OB df
     M_header = ['time', 'event_type', 'order_ID', 'size', 'price', 'direction', 'ticker']
     df_m = df_m.dropna(axis=1, how='any')
     df_m.columns = M_header
+
+    df_m['time'] = pd.to_timedelta(df_m['time'], unit='s')
+
+    # Define the base date
+    base_date = pd.Timestamp(date)
+
+    # Add the timedelta (time_sec) to the base date
+    df_m['datetime'] = base_date + df_m['time']
+    df_m.drop(columns=['time'], inplace=True)
+    return df_m
+
+
+def data_preprocessing(df_m, df_ob, ticker_name=None):
+    '''Preprocess message and orderbook dataframe'''
+    df_ob['ticker'] = ticker_name
 
     OB_header = []
     for i in range(1, df_ob.shape[1]//4 + 1):
@@ -68,15 +81,6 @@ def data_preprocessing(df_m, df_ob, ticker_name=None):
     OB_header.append('ticker')
 
     df_ob.columns = OB_header
-
-    df_m['time'] = pd.to_timedelta(df_m['time'], unit='s')
-
-    # Define the base date
-    base_date = pd.Timestamp('2012-06-21')
-
-    # Add the timedelta (time_sec) to the base date
-    df_m['datetime'] = base_date + df_m['time']
-    df_m.drop(columns=['time'], inplace=True)
 
     # Creating event number
     df_m['event_number'] = df_m.groupby(['datetime', 'ticker']).cumcount()
