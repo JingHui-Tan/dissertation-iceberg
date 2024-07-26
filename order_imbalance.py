@@ -47,6 +47,7 @@ def calculate_log_returns(grouped):
     grouped['fut_log_ret'] = grouped['log_ret'].shift(-1)
     return grouped
 
+
 def filter_quantiles(grouped, column, lower_quantile=0.025, upper_quantile=0.975):
     lower_bound = grouped[column].quantile(lower_quantile)
     upper_bound = grouped[column].quantile(upper_quantile)
@@ -67,7 +68,7 @@ def calculate_order_imbalance(df, direction_column, size_column, pred_dir_column
 
 
 
-def order_imbalance(df_full, df_pred=None, delta='30S', type='vis'):
+def order_imbalance(df_full, df_pred=None, df_ob=None, delta='30S', type='vis'):
     if type == 'vis':
         df = df_full[df_full['event_type'] == 4]
     elif type == 'hid':
@@ -75,12 +76,10 @@ def order_imbalance(df_full, df_pred=None, delta='30S', type='vis'):
     else:
         print("Not Implemented")
         return
-
     df['datetime_bins'] = df.index.get_level_values('datetime').ceil(delta)
 
     if type == 'hid':
         df = pd.merge(df.reset_index(), df_pred.reset_index(), on=['datetime', 'ticker', 'event_number']).set_index(['datetime', 'ticker', 'event_number'])
-
     grouped = df.groupby('datetime_bins').apply(
         lambda x: pd.Series({
             'order_imbalance': calculate_order_imbalance(x, 'direction', 'size', 'pred_dir' if type == 'hid' else None),
@@ -135,19 +134,41 @@ def iceberg_order_imbalance(df_full, df_pred, delta='5min'):
 
 
 
+def agg_order(df, df_pred, agg='agg_low'):
+    df = df[df['event_type']==5]
+
+    if agg=='agg_low':
+        return df[((df_pred['pred_dir'] == 1) & (df['agg_ratio'] < 0.5)) | 
+                  ((df_pred['pred_dir'] == -1) & (df['agg_ratio'] > 0.5))]
+    
+    if agg=='agg_mid':
+        return df[df['agg_ratio'] == 0.5]
+
+    if agg=='agg_high':
+        return df[((df_pred['pred_dir'] == 1) & (df['agg_ratio'] > 0.5)) | 
+                  ((df_pred['pred_dir'] == -1) & (df['agg_ratio'] < 0.5))]
 
 
 
-def conditional_order_imbalance(hidden=True):
-    pass
 
+def conditional_order_imbalance(df_full, df_pred, delta='5min', condition='agg'):
+    if condition == 'agg':
+        df_fin = order_imbalance(df_full=df_full, delta=delta, type='vis')
+        df_fin.rename(columns={'order_imbalance': 'order_imbalance_vis'}, inplace=True)
+        
+        for version, suffix in zip(['agg_low', 'agg_mid', 'agg_high'], ['_agg_low', '_agg_mid', '_agg_high']):
+            df = order_imbalance(df_full=agg_order(df_full, df_pred, agg=version), df_pred=df_pred, delta=delta, type='hid')
+            df.rename(columns={'order_imbalance': f'order_imbalance{suffix}'}, inplace=True)
+            df_fin = df_fin.merge(df[['datetime_bins', f'order_imbalance{suffix}']], on='datetime_bins')
 
+        return df_fin
 
 
 
 def lm_results(df_full, df_pred, delta_lst, order_type='combined', predictive=True):
 
     y = "fut_log_ret" if predictive else "log_ret"
+    x_momentum = "log_ret" if predictive else ""
     
     params_lst = []
     tvalues_lst = []
@@ -158,23 +179,31 @@ def lm_results(df_full, df_pred, delta_lst, order_type='combined', predictive=Tr
 
         elif order_type == 'comb_iceberg':
             df_merged = iceberg_order_imbalance(df_full, df_pred, delta=delta)
-            lm = smf.ols(formula=f"""{y} ~ order_imbalance_vis + order_imbalance_hid + order_imbalance_ib""", 
+            lm = smf.ols(formula=f"""{y} ~ order_imbalance_vis + order_imbalance_hid + order_imbalance_ib + {x_momentum}""", 
                          data=df_merged).fit()
             params_lst.append((lm.params[1], lm.params[2], lm.params[3]))
             tvalues_lst.append((lm.tvalues[1], lm.tvalues[2], lm.tvalues[3]))
 
+        elif order_type == 'agg':
+            df_merged = conditional_order_imbalance(df_full, df_pred, delta=delta, condition='agg')
+            lm = smf.ols(formula=f"""{y} ~ order_imbalance_vis + order_imbalance_agg_low + \n
+                         order_imbalance_agg_mid + order_imbalance_agg_high + {x_momentum}""", 
+                         data=df_merged).fit()
+            params_lst.append((lm.params[1], lm.params[2], lm.params[3], lm.params[4]))
+            tvalues_lst.append((lm.tvalues[1], lm.tvalues[2], lm.tvalues[3], lm.tvalues[4]))
+
         if order_type == "vis":
-            lm = smf.ols(formula=f"""{y} ~ order_imbalance_vis""", data=df_merged).fit()
+            lm = smf.ols(formula=f"""{y} ~ order_imbalance_vis + {x_momentum}""", data=df_merged).fit()
             params_lst.append(lm.params[1])
             tvalues_lst.append(lm.tvalues[1])
 
         elif order_type == "hid":
-            lm = smf.ols(formula=f"""{y} ~ order_imbalance_hid""", data=df_merged).fit()
+            lm = smf.ols(formula=f"""{y} ~ order_imbalance_hid + {x_momentum}""", data=df_merged).fit()
             params_lst.append(lm.params[1])
             tvalues_lst.append(lm.tvalues[1])
 
         elif order_type == "combined":
-            lm = smf.ols(formula=f"""{y} ~ order_imbalance_vis + order_imbalance_hid""", data=df_merged).fit()
+            lm = smf.ols(formula=f"""{y} ~ order_imbalance_vis + order_imbalance_hid + {x_momentum}""", data=df_merged).fit()
             params_lst.append((lm.params[1], lm.params[2]))
             tvalues_lst.append((lm.tvalues[1], lm.tvalues[2]))
 
@@ -202,6 +231,21 @@ def lm_results(df_full, df_pred, delta_lst, order_type='combined', predictive=Tr
             'tvalues_hid': [x[1] for x in tvalues_lst],
             'params_ib': [x[2] for x in params_lst],
             'tvalues_ib': [x[2] for x in tvalues_lst]
+        })
+        return df
+
+
+    elif order_type == 'agg':
+        df = pd.DataFrame({
+            'timeframe': delta_lst,
+            'params_vis': [x[0] for x in params_lst],
+            'tvalues_vis': [x[0] for x in tvalues_lst],
+            'params_agg_low': [x[1] for x in params_lst],
+            'tvalues_agg_low': [x[1] for x in tvalues_lst],
+            'params_agg_mid': [x[2] for x in params_lst],
+            'tvalues_agg_mid': [x[2] for x in tvalues_lst],
+            'params_agg_high': [x[3] for x in params_lst],
+            'tvalues_agg_high': [x[3] for x in tvalues_lst],
         })
         return df
 
