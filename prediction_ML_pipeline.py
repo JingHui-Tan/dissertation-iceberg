@@ -12,6 +12,8 @@ from sklearn.compose import ColumnTransformer
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 import warnings
+import os
+
 
 
 warnings.filterwarnings('ignore')
@@ -45,10 +47,16 @@ warnings.filterwarnings('ignore')
 #             features_df = prediction_feature(df_m_mh, df_ob_mh, labelled=self.labelled)
 #             return features_df
         
+def extract_info_from_filename(file_name):
+    # Split the filename by underscores
+    parts = file_name.split('_')
+    # Extract the date and ticker symbol (assuming the format is consistent)
+    ticker = parts[0]
+    date = parts[1]
+    return ticker, date
 
 def add_date_ticker(df_m, date, ticker):
     '''Add date to dataframe'''
-
     df_m['ticker'] = ticker
 
     # Set up header for message df and OB df
@@ -65,6 +73,43 @@ def add_date_ticker(df_m, date, ticker):
     df_m['datetime'] = base_date + df_m['time']
     df_m.drop(columns=['time'], inplace=True)
     return df_m
+
+def concatenate_csv_files(folder_path):
+    # List to hold dataframes
+    dataframes_m = []
+    dataframes_ob = []
+
+    # Get a sorted list of files in the folder that end with .csv and contain 'message' or 'orderbook'
+    file_names = [f for f in os.listdir(folder_path) if f.endswith('.csv') and ('message' in f or 'orderbook' in f)]
+    file_names.sort()
+
+    # Loop through the sorted list of files
+    for file_name in file_names:
+        file_path = os.path.join(folder_path, file_name)
+        # Check if the file is a message CSV
+        if 'message' in file_name:
+            # Read the CSV file into a dataframe
+            df = pd.read_csv(file_path)
+            # Extract ticker and date and store them in the list
+            ticker, date = extract_info_from_filename(file_name)
+            df_adj = add_date_ticker(df, date, ticker)
+            # Append the dataframe to the list
+            dataframes_m.append(df_adj)
+        elif 'orderbook' in file_name:
+            # Read the CSV file into a dataframe
+            df_ob = pd.read_csv(file_path)
+            dataframes_ob.append(df_ob)
+
+    # Concatenate all dataframes in the list into a single dataframe
+    concatenated_df_m = pd.concat(dataframes_m, ignore_index=True)
+    concatenated_df_ob = pd.concat(dataframes_ob, ignore_index=True)
+
+    return concatenated_df_m, concatenated_df_ob
+
+    # Example code:
+    # folder_path = '/vols/teaching/msc-projects/2023-2024/jitan/dissertation-iceberg/data/SPY_2019/'
+    # concatenated_df_m, concatenated_df_ob = concatenate_csv_files(folder_path)
+
 
 
 def data_preprocessing(df_m, df_ob, ticker_name=None):
@@ -106,6 +151,10 @@ def data_preprocessing(df_m, df_ob, ticker_name=None):
     # Remove duplicates based on index
     df_m_mh = df_m_mh[~df_m_mh.index.duplicated(keep='first')]
     df_ob_mh = df_ob_mh[~df_ob_mh.index.duplicated(keep='first')]
+
+    # Sort based on datetime
+    df_m_mh = df_m_mh.sort_index()
+    df_ob_mh = df_ob_mh.sort_index()
 
     return df_m_mh, df_ob_mh
 
@@ -209,7 +258,7 @@ def prediction_feature(df_m_mh, df_ob_mh, labelled=False, standardise=True):
     # Extract event type 5 df and features, drop irrelevant features
     features_df = df_m_mh[df_m_mh['event_type'] == 5]
     features_df.drop(columns=['event_type', 'order_ID', 'price', 'direction', 'midprice'], inplace=True)
-    numerical_columns = ['size', 'ofi', 'agg_ratio']
+    numerical_columns = ['size']
 
     # Standardise numerical columns
     if standardise:
@@ -332,6 +381,7 @@ def train_and_evaluate_model(classifier, grid, df_ob_labelled_lst, df_m_labelled
 
 
     # Predict unlabelled data
+    print(pred_features_df[pred_features_df.isna().any(axis=1)])
     y_pred = best_classifier.predict(pred_features_df)
     y_pred_prob = best_classifier.predict_proba(pred_features_df)[:, 1]
 
