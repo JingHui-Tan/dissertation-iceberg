@@ -381,7 +381,6 @@ def train_and_evaluate_model(classifier, grid, df_ob_labelled_lst, df_m_labelled
 
 
     # Predict unlabelled data
-    print(pred_features_df[pred_features_df.isna().any(axis=1)])
     y_pred = best_classifier.predict(pred_features_df)
     y_pred_prob = best_classifier.predict_proba(pred_features_df)[:, 1]
 
@@ -406,6 +405,26 @@ def train_and_evaluate_model(classifier, grid, df_ob_labelled_lst, df_m_labelled
 
 
 
+def save_dataframe_to_folder(df, folder_path, file_name):
+    # Ensure the folder exists
+    os.makedirs(folder_path, exist_ok=True)
+    # Create the full file path
+    file_path = os.path.join(folder_path, file_name)
+    # Save the dataframe to a CSV file
+    df.to_csv(file_path, index=False)
+    print(f"DataFrame saved to {file_path}")
+
+# # Example usage:
+# # Create a sample DataFrame
+# data = {'A': [1, 2, 3], 'B': [4, 5, 6]}
+# df = pd.DataFrame(data)
+
+# # Specify the folder path and file name
+# folder_path = '/path/to/your/folder'
+# file_name = 'processed_data.csv'
+
+# # Save the DataFrame
+# save_dataframe_to_folder(df, folder_path, file_name)
 
 
 # # Define the training pipeline
