@@ -57,11 +57,12 @@ def extract_info_from_filename(file_name):
 
 def add_date_ticker(df_m, date, ticker):
     '''Add date to dataframe'''
+    # df_m = df_m.dropna(axis=1, how='all')
+    if 6 in df_m.columns:
+        df_m = df_m.drop(columns=[6])    
     df_m['ticker'] = ticker
-
     # Set up header for message df and OB df
     M_header = ['time', 'event_type', 'order_ID', 'size', 'price', 'direction', 'ticker']
-    df_m = df_m.dropna(axis=1, how='any')
     df_m.columns = M_header
 
     df_m['time'] = pd.to_timedelta(df_m['time'], unit='s')
@@ -89,7 +90,7 @@ def concatenate_csv_files(folder_path):
         # Check if the file is a message CSV
         if 'message' in file_name:
             # Read the CSV file into a dataframe
-            df = pd.read_csv(file_path)
+            df = pd.read_csv(file_path, header=None)
             # Extract ticker and date and store them in the list
             ticker, date = extract_info_from_filename(file_name)
             df_adj = add_date_ticker(df, date, ticker)
@@ -97,12 +98,11 @@ def concatenate_csv_files(folder_path):
             dataframes_m.append(df_adj)
         elif 'orderbook' in file_name:
             # Read the CSV file into a dataframe
-            df_ob = pd.read_csv(file_path)
+            df_ob = pd.read_csv(file_path, header=None)
             dataframes_ob.append(df_ob)
-
     # Concatenate all dataframes in the list into a single dataframe
-    concatenated_df_m = pd.concat(dataframes_m, ignore_index=True)
-    concatenated_df_ob = pd.concat(dataframes_ob, ignore_index=True)
+    concatenated_df_m = pd.concat(dataframes_m)
+    concatenated_df_ob = pd.concat(dataframes_ob)
 
     return concatenated_df_m, concatenated_df_ob
 

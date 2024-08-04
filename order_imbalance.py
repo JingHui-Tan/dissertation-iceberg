@@ -175,7 +175,7 @@ def size_order(df, df_pred, size='small'):
         return df[df['size'] < lower_q]
     
     elif size=='medium':
-        return df[(df['size'] > lower_q) & (df['size'] < upper_q)]
+        return df[(df['size'] >= lower_q) & (df['size'] <= upper_q)]
 
     elif size=='large':
         return df[df['size'] > upper_q]
