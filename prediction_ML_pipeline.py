@@ -138,8 +138,8 @@ def data_preprocessing(df_m, df_ob, ticker_name=None):
     df_ob.index = df_m.index
 
     # Define the start and end times
-    start_time = pd.to_datetime("09:15:00").time()
-    end_time = pd.to_datetime("15:45:00").time()
+    start_time = pd.to_datetime("09:30:00").time()
+    end_time = pd.to_datetime("15:30:00").time()
 
     # Extract the 'datetime' level from the MultiIndex and filter based on the time
     filtered_index = df_m.index.get_level_values('datetime').to_series().between_time(start_time, end_time).index
