@@ -207,7 +207,7 @@ def OI_results(df_dict, order_type='combined', predictive=True, weighted_mp=Fals
         
         lm_results.append(row_result)
     
-    return pd.DataFrame(lm_results, columns=col_names)
+    return pd.DataFrame(lm_results, columns=col_names_dict[order_type])
 
 
 
