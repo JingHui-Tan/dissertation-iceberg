@@ -97,21 +97,21 @@ def order_imbalance_calc(archive_path, model_path,
 
                 # Process data for prediction
                 message_df = add_date_ticker(message_df, date, ticker)
-                message_df_mh, orderbook_df_mh = data_preprocessing(message_df, orderbook_df, ticker_name=ticker)
-                X = prediction_feature(message_df_mh, orderbook_df_mh, labelled=False, standardise=True)
+                message_df, orderbook_df = data_preprocessing(message_df, orderbook_df, ticker_name=ticker)
+                X = prediction_feature(message_df, orderbook_df, labelled=False, standardise=True)
 
                 # Predict using the trained model
                 predictions = model.predict(X)
 
                 for delta in delta_lst:
                     if order_type == 'vis' or order_type == 'hid' or order_type == 'combined':
-                        df_merged = combined_order_imbalance(message_df_mh, predictions, orderbook_df_mh, delta=delta)
+                        df_merged = combined_order_imbalance(message_df, predictions, orderbook_df, delta=delta)
 
                     elif order_type == 'comb_iceberg':
-                        df_merged = iceberg_order_imbalance(message_df_mh, predictions, orderbook_df_mh, delta=delta)
+                        df_merged = iceberg_order_imbalance(message_df, predictions, orderbook_df, delta=delta)
 
                     elif order_type == 'agg' or order_type == 'size':
-                        df_merged = conditional_order_imbalance(message_df_mh, predictions, orderbook_df_mh, delta=delta, condition=order_type)
+                        df_merged = conditional_order_imbalance(message_df, predictions, orderbook_df, delta=delta, condition=order_type)
                 
                     df_dict[delta].append(df_merged)
 
@@ -128,14 +128,29 @@ def get_data_in_chunks(df, chunk_size=100):
         yield df.iloc[start:end]
 
 
-def calculate_t_values(X, y):
-    pass
+def calculate_t_values(model, X, y):
+    # Assuming we fit the model on the entire dataset to calculate residuals
+    y_pred = model.predict(X)
+    residuals = y - y_pred
+    residual_sum_of_squares = np.sum(residuals**2)
+
+    # Calculate the variance of the residuals
+    degrees_of_freedom = X.shape[0] - X.shape[1] - 1
+    variance_of_residuals = residual_sum_of_squares / degrees_of_freedom
+
+    # Calculate the standard errors of the coefficients
+    X_with_intercept = np.column_stack((np.ones(X.shape[0]), X))
+    covariance_matrix = variance_of_residuals * np.linalg.inv(np.dot(X_with_intercept.T, X_with_intercept))
+    standard_errors = np.sqrt(np.diag(covariance_matrix)[1:])
+
+    # Calculate t-values
+    t_values = model.coef_ / standard_errors
+
+    return t_values
+
 
 def lm_analysis(df, order_type='combined', predictive=True, weighted_mp=False,
                 momentum=False):
-    
-    params_lst = []
-    tvalues_lst = []
     
     if weighted_mp==False:
         output = "fut_log_ret" if predictive else "log_ret"
@@ -174,9 +189,9 @@ def lm_analysis(df, order_type='combined', predictive=True, weighted_mp=False,
     y = df[output]
 
     coefficients = sgd_reg.coef_
-    t_values = calculate_t_values(X, y)
+    t_values = calculate_t_values(sgd_reg, X, y)
 
-    return coefficients, t_values
+    return coefficients.tolist(), t_values.tolist()
     
 
 def OI_results(df_dict, order_type='combined', predictive=True, weighted_mp=False,
