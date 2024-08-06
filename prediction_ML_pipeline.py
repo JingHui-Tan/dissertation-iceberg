@@ -98,7 +98,7 @@ def concatenate_csv_files(folder_path):
             dataframes_m.append(df_adj)
         elif 'orderbook' in file_name:
             # Read the CSV file into a dataframe
-            df_ob = pd.read_csv(file_path, header=None)
+            df_ob = pd.read_csv(file_path, header=None, usecols=[0, 1, 2, 3])
             dataframes_ob.append(df_ob)
     # Concatenate all dataframes in the list into a single dataframe
     concatenated_df_m = pd.concat(dataframes_m)
