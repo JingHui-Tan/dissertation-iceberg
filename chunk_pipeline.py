@@ -287,7 +287,7 @@ def lm_analysis(df, order_type='combined', predictive=True, weighted_mp=False,
 
     X = df[X_coefficients]
     y = df[output]
-
+    print("Model fit completed")
     coefficients = sgd_reg.coef_
     t_values = calculate_t_values(sgd_reg, X, y)
 
@@ -314,7 +314,8 @@ def OI_results(df_dict, order_type='combined', predictive=True, weighted_mp=Fals
     for delta in df_dict:
         row_result = [delta]
         # Need to be in the form of lists
-        coefficients, t_values = lm_analysis(df_dict[delta], order_type='combined', predictive=True, weighted_mp=False, momentum=False)
+        coefficients, t_values = lm_analysis(df_dict[delta], order_type=order_type, 
+                                             predictive=predictive, weighted_mp=weighted_mp, momentum=momentum)
 
         for coef, t_val in zip(coefficients, t_values):
             row_result += [coef]
