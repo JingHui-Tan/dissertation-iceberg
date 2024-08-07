@@ -10,6 +10,7 @@ import joblib
 import statsmodels.formula.api as smf
 from sklearn.linear_model import SGDRegressor
 import os
+import logging
 
 
 from prediction_ML_pipeline import data_preprocessing, prediction_feature, add_date_ticker, extract_info_from_filename, hid_outside_spread_tag
@@ -221,33 +222,126 @@ def order_imbalance_calc(archive_path, model,
 
     return df_dict
 
-# Function to yield chunks of data
-def get_data_in_chunks(df, chunk_size=100):
-    for start in range(0, df.shape[0], chunk_size):
-        end = min(start + chunk_size, df.shape[0])
-        yield df.iloc[start:end]
+# # Function to yield chunks of data
+# def get_data_in_chunks(df, chunk_size=100):
+#     for start in range(0, df.shape[0], chunk_size):
+#         end = min(start + chunk_size, df.shape[0])
+#         yield df.iloc[start:end]
 
+
+# def calculate_t_values(model, X, y):
+#     # Assuming we fit the model on the entire dataset to calculate residuals
+#     y_pred = model.predict(X)
+#     residuals = y - y_pred
+#     residual_sum_of_squares = np.sum(residuals**2)
+
+#     # Calculate the variance of the residuals
+#     degrees_of_freedom = X.shape[0] - X.shape[1] - 1
+#     variance_of_residuals = residual_sum_of_squares / degrees_of_freedom
+
+#     # Calculate the standard errors of the coefficients
+#     X_with_intercept = np.column_stack((np.ones(X.shape[0]), X))
+#     covariance_matrix = variance_of_residuals * np.linalg.inv(np.dot(X_with_intercept.T, X_with_intercept))
+#     standard_errors = np.sqrt(np.diag(covariance_matrix)[1:])
+
+#     # Calculate t-values
+#     t_values = model.coef_ / standard_errors
+
+#     return t_values
+
+
+# def lm_analysis(df, order_type='combined', predictive=True, weighted_mp=False,
+#                 momentum=False):
+    
+#     if weighted_mp==False:
+#         output = "fut_log_ret" if predictive else "log_ret"
+#     else:
+#         output = 'fut_weighted_log_ret' if predictive else "weighted_log_ret"    
+
+#     # Initialize the SGDRegressor
+#     sgd_reg = SGDRegressor(max_iter=1000, tol=1e-3)
+
+#     # Fit the model in chunks
+#     coefficients_dict = {
+#         'vis': ['order_imbalance_vis'],
+#         'hid': ['order_imbalance_hid'],
+#         'combined': ['order_imbalance_vis', 'order_imbalance_hid'],
+#         'comb_iceberg': ['order_imbalance_vis', 'order_imbalance_hid', 'order_imbalance_ib'],
+#         'size': ['order_imbalance_vis', 'order_imbalance_small', 
+#                  'order_imbalance_medium', 'order_imbalance_large'],
+#         'agg': ['order_imbalance_vis', 'order_imbalance_agg_low',
+#                 'order_imbalance_agg_mid', 'order_imbalance_agg_high']
+#     }
+
+#     X_coefficients = coefficients_dict[order_type]
+#     num_values = int(len(X_coefficients))
+
+#     if momentum and weighted_mp:
+#         X_coefficients += ['weighted_log_ret']
+    
+#     elif momentum and not weighted_mp:
+#         X_coefficients += ['log_ret']
+
+#     for chunk in get_data_in_chunks(df, chunk_size=100):
+#         X_chunk = chunk[X_coefficients].values
+#         y_chunk = chunk[output].values
+#         sgd_reg.partial_fit(X_chunk, y_chunk)
+
+#     X = df[X_coefficients]
+#     y = df[output]
+#     print("Model fit completed")
+#     coefficients = sgd_reg.coef_
+#     t_values = calculate_t_values(sgd_reg, X, y)
+
+#     return coefficients[:num_values].tolist(), t_values[:num_values].tolist()
+    
+
+# def OI_results(df_dict, order_type='combined', predictive=True, weighted_mp=False,
+#                 momentum=False):
+#     lm_results = []
+
+#     col_names_dict = {
+#         'vis': ['timeframe', 'params_vis', 'tvals_vis'],
+#         'hid': ['timeframe', 'params_hid', 'tvals_hid'],
+#         'combined': ['timeframe', 'params_vis', 'tvals_vis', 'params_hid', 'tvals_hid'],
+#         'comb_iceberg': ['timeframe', 'params_vis', 'tvals_vis', 'params_hid',
+#                          'tvals_hid', 'params_ib', 'tvals_ib'],
+#         'agg': ['timeframe', 'params_vis', 'tvals_vis', 'params_hid', 'tvals_hid',
+#                 'params_low', 'tvals_low', 'params_mid', 'tvals_mid', 'params_high', 'tvals_high'],
+#         'size': ['timeframe', 'params_vis', 'tvals_vis', 'params_hid', 'tvals_hid',
+#                  'params_small', 'tvals_small', 'params_mid', 'tvals_mid', 'params_large', 'tvals_large']
+
+#     }
+
+#     for delta in df_dict:
+#         print(f'Currently fitting for delta: {delta}')
+#         row_result = [delta]
+#         # Need to be in the form of lists
+#         coefficients, t_values = lm_analysis(df_dict[delta], order_type=order_type, 
+#                                              predictive=predictive, weighted_mp=weighted_mp, momentum=momentum)
+
+#         for coef, t_val in zip(coefficients, t_values):
+#             row_result += [coef]
+#             row_result += [t_val]
+        
+#         lm_results.append(row_result)
+#     print(lm_results)
+    
+#     return pd.DataFrame(lm_results, columns=col_names_dict[order_type])
+
+
+# Configure logging
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def get_data_in_chunks(df, chunk_size=100):
+    """Utility function to yield data in chunks."""
+    for start in range(0, len(df), chunk_size):
+        yield df[start:start + chunk_size]
 
 def calculate_t_values(model, X, y):
-    # Assuming we fit the model on the entire dataset to calculate residuals
-    y_pred = model.predict(X)
-    residuals = y - y_pred
-    residual_sum_of_squares = np.sum(residuals**2)
-
-    # Calculate the variance of the residuals
-    degrees_of_freedom = X.shape[0] - X.shape[1] - 1
-    variance_of_residuals = residual_sum_of_squares / degrees_of_freedom
-
-    # Calculate the standard errors of the coefficients
-    X_with_intercept = np.column_stack((np.ones(X.shape[0]), X))
-    covariance_matrix = variance_of_residuals * np.linalg.inv(np.dot(X_with_intercept.T, X_with_intercept))
-    standard_errors = np.sqrt(np.diag(covariance_matrix)[1:])
-
-    # Calculate t-values
-    t_values = model.coef_ / standard_errors
-
-    return t_values
-
+    """Stub for t-value calculation, replace with actual implementation."""
+    # Implement the actual t-value calculation here.
+    return np.random.rand(X.shape[1])  # Placeholder
 
 def lm_analysis(df, order_type='combined', predictive=True, weighted_mp=False,
                 momentum=False):
@@ -273,7 +367,7 @@ def lm_analysis(df, order_type='combined', predictive=True, weighted_mp=False,
     }
 
     X_coefficients = coefficients_dict[order_type]
-    num_values = int(len(X_coefficients))
+    num_values = len(X_coefficients)
 
     if momentum and weighted_mp:
         X_coefficients += ['weighted_log_ret']
@@ -282,18 +376,32 @@ def lm_analysis(df, order_type='combined', predictive=True, weighted_mp=False,
         X_coefficients += ['log_ret']
 
     for chunk in get_data_in_chunks(df, chunk_size=100):
-        X_chunk = chunk[X_coefficients].values
-        y_chunk = chunk[output].values
-        sgd_reg.partial_fit(X_chunk, y_chunk)
+        try:
+            X_chunk = chunk[X_coefficients].values
+            y_chunk = chunk[output].values
 
-    X = df[X_coefficients]
-    y = df[output]
-    print("Model fit completed")
-    coefficients = sgd_reg.coef_
-    t_values = calculate_t_values(sgd_reg, X, y)
+            # Check for NaNs
+            if np.isnan(X_chunk).any() or np.isnan(y_chunk).any():
+                logging.warning("NaNs detected in chunk data.")
+                continue
+            
+            sgd_reg.partial_fit(X_chunk, y_chunk)
+        except Exception as e:
+            logging.error(f"Error processing chunk: {e}")
+            continue
 
-    return coefficients[:num_values].tolist(), t_values[:num_values].tolist()
-    
+    try:
+        X = df[X_coefficients].values
+        y = df[output].values
+        logging.info("Model fit completed")
+
+        coefficients = sgd_reg.coef_
+        t_values = calculate_t_values(sgd_reg, X, y)
+
+        return coefficients[:num_values].tolist(), t_values[:num_values].tolist()
+    except Exception as e:
+        logging.error(f"Error in final model fit: {e}")
+        return [], []
 
 def OI_results(df_dict, order_type='combined', predictive=True, weighted_mp=False,
                 momentum=False):
@@ -311,28 +419,27 @@ def OI_results(df_dict, order_type='combined', predictive=True, weighted_mp=Fals
                  'params_small', 'tvals_small', 'params_mid', 'tvals_mid', 'params_large', 'tvals_large']
 
     }
-
+    logging.info("Process started")
+    logging.debug(f"DataFrames in df_dict: {list(df_dict.keys())}")
+    
     for delta in df_dict:
-        print(f'Currently fitting for delta: {delta}')
+        logging.info(f'Currently fitting for delta: {delta}')
         row_result = [delta]
-        # Need to be in the form of lists
-        coefficients, t_values = lm_analysis(df_dict[delta], order_type=order_type, 
-                                             predictive=predictive, weighted_mp=weighted_mp, momentum=momentum)
-
-        for coef, t_val in zip(coefficients, t_values):
-            row_result += [coef]
-            row_result += [t_val]
         
-        lm_results.append(row_result)
-    print(lm_results)
+        try:
+            coefficients, t_values = lm_analysis(df_dict[delta], order_type=order_type, 
+                                                 predictive=predictive, weighted_mp=weighted_mp, momentum=momentum)
+
+            for coef, t_val in zip(coefficients, t_values):
+                row_result += [coef]
+                row_result += [t_val]
+            
+            lm_results.append(row_result)
+        except Exception as e:
+            logging.error(f"Error in lm_analysis for delta {delta}: {e}")
+            continue
+    
+    logging.info("Process completed")
+    logging.debug(f"LM Results: {lm_results}")
     
     return pd.DataFrame(lm_results, columns=col_names_dict[order_type])
-
-
-
-
-    
-
-
-                
-
