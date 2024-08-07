@@ -11,6 +11,8 @@ import statsmodels.formula.api as smf
 from sklearn.linear_model import SGDRegressor
 import os
 import logging
+from scipy.linalg import inv
+import gc
 
 
 from prediction_ML_pipeline import data_preprocessing, prediction_feature, add_date_ticker, extract_info_from_filename, hid_outside_spread_tag
@@ -354,13 +356,21 @@ def calculate_t_values(model, df, X_coefficients, output, chunk_size=100):
         intercept = np.ones((X_chunk.shape[0], 1))
         X_chunk_with_intercept = np.hstack((intercept, X_chunk))
         XtX_sum += np.dot(X_chunk_with_intercept.T, X_chunk_with_intercept)
-    
+
+        # Delete to free memory
+        del X_chunk, y_chunk, y_chunk_pred, residuals, intercept, X_chunk_with_intercept
+        gc.collect()
+
     # Calculate the variance of the residuals
     degrees_of_freedom = len(df) - len(X_coefficients) - 1
+
+    del df
+    gc.collect()
+    
     variance_of_residuals = residual_sum_of_squares / degrees_of_freedom
 
     # Calculate the covariance matrix
-    covariance_matrix = variance_of_residuals * np.linalg.inv(XtX_sum)
+    covariance_matrix = variance_of_residuals * inv(XtX_sum)
     standard_errors = np.sqrt(np.diag(covariance_matrix)[1:])
 
     # Calculate t-values
