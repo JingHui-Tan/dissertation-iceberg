@@ -273,6 +273,7 @@ def lm_analysis(df, order_type='combined', predictive=True, weighted_mp=False,
     }
 
     X_coefficients = coefficients_dict[order_type]
+    num_values = int(len(X_coefficients))
 
     if momentum and weighted_mp:
         X_coefficients += ['weighted_log_ret']
@@ -291,7 +292,7 @@ def lm_analysis(df, order_type='combined', predictive=True, weighted_mp=False,
     coefficients = sgd_reg.coef_
     t_values = calculate_t_values(sgd_reg, X, y)
 
-    return coefficients.tolist(), t_values.tolist()
+    return coefficients[:num_values].tolist(), t_values[:num_values].tolist()
     
 
 def OI_results(df_dict, order_type='combined', predictive=True, weighted_mp=False,
@@ -312,6 +313,7 @@ def OI_results(df_dict, order_type='combined', predictive=True, weighted_mp=Fals
     }
 
     for delta in df_dict:
+        print(f'Currently fitting for delta: {delta}')
         row_result = [delta]
         # Need to be in the form of lists
         coefficients, t_values = lm_analysis(df_dict[delta], order_type=order_type, 
@@ -322,6 +324,7 @@ def OI_results(df_dict, order_type='combined', predictive=True, weighted_mp=Fals
             row_result += [t_val]
         
         lm_results.append(row_result)
+    print(lm_results)
     
     return pd.DataFrame(lm_results, columns=col_names_dict[order_type])
 
