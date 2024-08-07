@@ -340,8 +340,22 @@ def get_data_in_chunks(df, chunk_size=100):
 
 def calculate_t_values(model, X, y):
     """Stub for t-value calculation, replace with actual implementation."""
-    # Implement the actual t-value calculation here.
-    return np.random.rand(X.shape[1])  # Placeholder
+    y_pred = model.predict(X)
+    residuals = y - y_pred
+    residual_sum_of_squares = np.sum(residuals**2)
+
+    # Calculate the variance of the residuals
+    degrees_of_freedom = X.shape[0] - X.shape[1] - 1
+    variance_of_residuals = residual_sum_of_squares / degrees_of_freedom
+
+    # Calculate the standard errors of the coefficients
+    X_with_intercept = np.column_stack((np.ones(X.shape[0]), X))
+    covariance_matrix = variance_of_residuals * np.linalg.inv(np.dot(X_with_intercept.T, X_with_intercept))
+    standard_errors = np.sqrt(np.diag(covariance_matrix)[1:])
+
+    # Calculate t-values
+    t_values = model.coef_ / standard_errors
+    return t_values
 
 def lm_analysis(df, order_type='combined', predictive=True, weighted_mp=False,
                 momentum=False):
