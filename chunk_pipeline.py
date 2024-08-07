@@ -338,19 +338,29 @@ def get_data_in_chunks(df, chunk_size=100):
     for start in range(0, len(df), chunk_size):
         yield df[start:start + chunk_size]
 
-def calculate_t_values(model, X, y):
-    """Stub for t-value calculation, replace with actual implementation."""
-    y_pred = model.predict(X)
-    residuals = y - y_pred
-    residual_sum_of_squares = np.sum(residuals**2)
+def calculate_t_values(model, df, X_coefficients, output, chunk_size=100):
+    """Calculate t-values for the coefficients in the model."""
+    residual_sum_of_squares = 0
+    XtX_sum = np.zeros((len(X_coefficients) + 1, len(X_coefficients) + 1))  # Include intercept
 
+    for chunk in get_data_in_chunks(df, chunk_size):
+        X_chunk = chunk[X_coefficients].values
+        y_chunk = chunk[output].values
+        y_chunk_pred = model.predict(X_chunk)
+        residuals = y_chunk - y_chunk_pred
+        residual_sum_of_squares += np.dot(residuals, residuals)
+
+        # Add intercept to X matrix directly
+        intercept = np.ones((X_chunk.shape[0], 1))
+        X_chunk_with_intercept = np.hstack((intercept, X_chunk))
+        XtX_sum += np.dot(X_chunk_with_intercept.T, X_chunk_with_intercept)
+    
     # Calculate the variance of the residuals
-    degrees_of_freedom = X.shape[0] - X.shape[1] - 1
+    degrees_of_freedom = len(df) - len(X_coefficients) - 1
     variance_of_residuals = residual_sum_of_squares / degrees_of_freedom
 
-    # Calculate the standard errors of the coefficients
-    X_with_intercept = np.column_stack((np.ones(X.shape[0]), X))
-    covariance_matrix = variance_of_residuals * np.linalg.inv(np.dot(X_with_intercept.T, X_with_intercept))
+    # Calculate the covariance matrix
+    covariance_matrix = variance_of_residuals * np.linalg.inv(XtX_sum)
     standard_errors = np.sqrt(np.diag(covariance_matrix)[1:])
 
     # Calculate t-values
@@ -405,12 +415,10 @@ def lm_analysis(df, order_type='combined', predictive=True, weighted_mp=False,
             continue
 
     try:
-        X = df[X_coefficients].values
-        y = df[output].values
         logging.info("Model fit completed")
 
         coefficients = sgd_reg.coef_
-        t_values = calculate_t_values(sgd_reg, X, y)
+        t_values = calculate_t_values(sgd_reg, df, X_coefficients, output, chunk_size=100)
 
         return coefficients[:num_values].tolist(), t_values[:num_values].tolist()
     except Exception as e:
