@@ -1,81 +1,189 @@
 import py7zr
 import pandas as pd
 import io
-from sklearn.experimental import enable_hist_gradient_boosting  # noqa
-from sklearn.ensemble import HistGradientBoostingClassifier
+import xgboost as xgb
+from sklearn.datasets import make_classification
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 import numpy as np
 import joblib
 import statsmodels.formula.api as smf
 from sklearn.linear_model import SGDRegressor
+import os
 
 
-from prediction_ML_pipeline import data_preprocessing, prediction_feature, add_date_ticker, extract_info_from_filename
+from prediction_ML_pipeline import data_preprocessing, prediction_feature, add_date_ticker, extract_info_from_filename, hid_outside_spread_tag
 from order_imbalance import order_imbalance, combined_order_imbalance, conditional_order_imbalance, iceberg_order_imbalance
 
 
 
-def process_and_train_hist_gb(archive_path, model_path, chunk_size=10000):
-    """
-    Extract 7z file, process CSVs in chunks, and train HistGradientBoostingClassifier.
-    """
+# def process_and_train_xgb(archive_path, model_path, params, num_boost_round=10, chunk_size=20000):
+#     """
+#     Extract 7z file, process CSVs in chunks, and train HistGradientBoostingClassifier.
+#     """
+    
+#     # Lists to accumulate validation predictions and true labels
+#     all_preds = []
+#     all_labels = []
 
-    model = HistGradientBoostingClassifier()
-    test_count = 0
-    test_correct = 0
+#     with py7zr.SevenZipFile(archive_path, mode='r') as archive:
+#         filenames = archive.getnames()
+#         orderbook_files = [f for f in filenames if 'orderbook' in f]
+#         message_files = [f for f in filenames if 'message' in f]
+#         # Process matching orderbook and message files
+#         for orderbook_file, message_file in zip(orderbook_files, message_files):
+#             extracted_files = archive.read([orderbook_file, message_file])
+#             orderbook_stream = io.BytesIO(extracted_files[orderbook_file].read())
+#             message_stream = io.BytesIO(extracted_files[message_file].read())
+#             print("Processed files:", orderbook_file, message_file)
+
+#             orderbook_iter = pd.read_csv(orderbook_stream, chunksize=chunk_size, usecols=[0, 1, 2, 3])
+#             message_iter = pd.read_csv(message_stream, chunksize=chunk_size, usecols=[0, 1, 2, 3, 4, 5])
+#             ticker, date = extract_info_from_filename(message_file)
+
+#             for orderbook_chunk, message_chunk in zip(orderbook_iter, message_iter):
+#                 # Merge the two chunks on a common key, adjust key names if necessary
+#                 message_chunk = add_date_ticker(message_chunk, date, ticker)
+#                 message_chunk, orderbook_chunk = data_preprocessing(message_chunk, orderbook_chunk, ticker_name=ticker)
+#                 X, y = prediction_feature(message_chunk, orderbook_chunk, labelled=True, standardise=True)
+#                 # Map classes from -1 to 0
+#                 y = y.replace(-1, 0)
+#                 y = y.astype(int)
+
+
+#                 # Split each chunk into training and validation sets
+#                 X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2)
+                
+#                 dtrain_chunk = xgb.DMatrix(X_train, label=y_train, enable_categorical=True)
+#                 dval_chunk = xgb.DMatrix(X_val, label=y_val, enable_categorical=True)
+
+#                 evals = [(dtrain_chunk, 'train'), (dval_chunk, 'eval')]
+
+#                 # Update model with new chunk
+#                 if 'booster' in locals():
+#                     booster = xgb.train(params, dtrain_chunk, num_boost_round, evals, xgb_model=booster)
+#                 else:
+#                     booster = xgb.train(params, dtrain_chunk, num_boost_round, evals)
+    
+#                 # Predict on the validation set for the current chunk
+#                 preds = booster.predict(dval_chunk)
+#                 preds = (preds > 0.5).astype(int)  # Thresholding for binary classification
+
+#                 # Accumulate predictions and true labels
+#                 all_preds.extend(preds)
+#                 all_labels.extend(y_val)
+
+#     # Compute overall accuracy
+#     overall_accuracy = accuracy_score(all_labels, all_preds)
+#     print(f"Overall Accuracy: {overall_accuracy}")
+
+#     # print(f"Overall Accuracy: {test_correct / test_count}")
+#     # Save the final model to the specified folder
+#     model_path = os.path.join(model_path, 'xgboost_model.json')
+#     booster.save_model(model_path)
+
+#     return booster
+
+
+def process_and_train_xgb(archive_path, model_path, params, num_boost_round=10, chunk_size=20000):
+    """
+    Extract 7z file, process CSVs in chunks, and train XGBoost classifier.
+    """
+    
+    # Lists to accumulate validation predictions and true labels
+    all_preds = []
+    all_labels = []
 
     with py7zr.SevenZipFile(archive_path, mode='r') as archive:
         filenames = archive.getnames()
         orderbook_files = [f for f in filenames if 'orderbook' in f]
-        message_files = [f for f in filenames if 'messages' in f]
-
+        message_files = [f for f in filenames if 'message' in f]
+        # Process matching orderbook and message files
         for orderbook_file, message_file in zip(orderbook_files, message_files):
-            print((orderbook_file, message_file))
-            with archive.read([orderbook_file, message_file]) as extracted_files:
-                orderbook_stream = io.BytesIO(extracted_files[orderbook_file].read())
-                message_stream = io.BytesIO(extracted_files[message_file].read())
+            extracted_files = archive.read([orderbook_file, message_file])
+            orderbook_stream = io.BytesIO(extracted_files[orderbook_file].read())
+            message_stream = io.BytesIO(extracted_files[message_file].read())
+            print("Processed files:", orderbook_file, message_file)
 
-                orderbook_iter = pd.read_csv(orderbook_stream, chunksize=chunk_size, usecols=[0, 1, 2, 3])
-                message_iter = pd.read_csv(message_stream, chunksize=chunk_size, usecols=[0, 1, 2, 3, 4, 5])
+            orderbook_iter = pd.read_csv(orderbook_stream, chunksize=chunk_size, header=None, usecols=[0, 1, 2, 3])
+            message_iter = pd.read_csv(message_stream, chunksize=chunk_size, header=None, usecols=[0, 1, 2, 3, 4, 5])
+            ticker, date = extract_info_from_filename(message_file)
 
-                ticker, date = extract_info_from_filename(message_stream)
+            # Initialize accumulators for the chunks
+            accumulated_orderbook = []
+            accumulated_message = []
+            accumulated_length_hidden = 0
 
-                for orderbook_chunk, message_chunk in zip(orderbook_iter, message_iter):
+            for orderbook_chunk, message_chunk in zip(orderbook_iter, message_iter):
+                message_chunk = add_date_ticker(message_chunk, date, ticker)
+                print(message_chunk)
+                accumulated_orderbook.append(orderbook_chunk)
+                accumulated_message.append(message_chunk)
+                accumulated_length_hidden += len(message_chunk[message_chunk.iloc[:, 1] == 5])
+                
+                # If the accumulated data reaches the desired chunk size, process the chunks
+                if accumulated_length_hidden >= 50:
+                    # Concatenate the accumulated chunks
+                    orderbook_chunk = pd.concat(accumulated_orderbook)
+                    message_chunk = pd.concat(accumulated_message)
+                    
+                    # Reset accumulators
+                    accumulated_orderbook = []
+                    accumulated_message = []
+
+
+                    print(len(message_chunk[message_chunk.iloc[:, 1] == 5]))
                     # Merge the two chunks on a common key, adjust key names if necessary
-                    message_chunk = add_date_ticker(message_chunk, date, ticker)
-                    message_chunk_mh, orderbook_chunk_mh = data_preprocessing(message_chunk, orderbook_chunk, ticker_name=ticker)
-                    X, y = prediction_feature(message_chunk_mh, orderbook_chunk_mh, labelled=True, standardise=True)
+                    message_chunk, orderbook_chunk = data_preprocessing(message_chunk, orderbook_chunk, ticker_name=ticker)
+                    X, y = prediction_feature(message_chunk, orderbook_chunk, labelled=True, standardise=True)
+                    # Map classes from -1 to 0
+                    y = y.replace(-1, 0)
+                    y = y.astype(int)
 
                     # Split each chunk into training and validation sets
                     X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2)
+                    
+                    dtrain_chunk = xgb.DMatrix(X_train, label=y_train, enable_categorical=True)
+                    dval_chunk = xgb.DMatrix(X_val, label=y_val, enable_categorical=True)
 
-                    # Fit the model incrementally
-                    model.partial_fit(X_train, y_train, classes=np.unique(y))
+                    evals = [(dtrain_chunk, 'train'), (dval_chunk, 'eval')]
 
-                    # Optional: Evaluate the model on the validation set of the current chunk
-                    y_pred = model.predict(X_val)
-                    chunk_accuracy = accuracy_score(y_val, y_pred)
-                    test_correct += sum(y_pred == y_val)
-                    test_count += len(y_val)
-                    print(f'Chunk Accuracy: {chunk_accuracy}')
+                    # Update model with new chunk
+                    if 'booster' in locals():
+                        booster = xgb.train(params, dtrain_chunk, num_boost_round, evals, xgb_model=booster)
+                    else:
+                        booster = xgb.train(params, dtrain_chunk, num_boost_round, evals)
+        
+                    # Predict on the validation set for the current chunk
+                    preds = booster.predict(dval_chunk)
+                    preds = (preds > 0.5).astype(int)  # Thresholding for binary classification
 
-    print(f"Overall Accuracy: {test_correct / test_count}")
-    joblib.dump(model, model_path)
-    return model
+                    # Accumulate predictions and true labels
+                    all_preds.extend(preds)
+                    all_labels.extend(y_val)
+
+    # Compute overall accuracy
+    overall_accuracy = accuracy_score(all_labels, all_preds)
+    print(f"Overall Accuracy: {overall_accuracy}")
+
+    # Save the final model to the specified folder
+    model_path = os.path.join(model_path, 'xgboost_model.json')
+    booster.save_model(model_path)
+
+    return booster
+
 
 
 ## Usage
 # archive_path = 'yourfile.7z'
 # model = process_and_train_hist_gb(archive_path)
 
-def order_imbalance_calc(archive_path, model_path,
+def order_imbalance_calc(archive_path, model,
                          delta_lst, order_type='combined'):
     """
     Extract 7z file, process CSVs, predict using the trained model and create OI dataframes dict.
     """
     # Load the trained model
-    model = joblib.load(model_path)
     df_dict = {key: [] for key in delta_lst}
     
 
@@ -85,39 +193,53 @@ def order_imbalance_calc(archive_path, model_path,
         message_files = [f for f in filenames if 'messages' in f]
 
         for orderbook_file, message_file in zip(orderbook_files, message_files):
-            with archive.read([orderbook_file, message_file]) as extracted_files:
-                orderbook_stream = io.BytesIO(extracted_files[orderbook_file].read())
-                message_stream = io.BytesIO(extracted_files[message_file].read())
+            extracted_files = archive.read([orderbook_file, message_file])
+            orderbook_stream = io.BytesIO(extracted_files[orderbook_file].read())
+            message_stream = io.BytesIO(extracted_files[message_file].read())
+            print("Processed files:", orderbook_file, message_file)
 
-                # Read the entire CSV files
-                orderbook_df = pd.read_csv(orderbook_stream, header=None, usecols=[0, 1, 2, 3])
-                message_df = pd.read_csv(message_stream, header=None, usecols=[0, 1, 2, 3, 4, 5])
+            # Read the entire CSV files
+            orderbook_df = pd.read_csv(orderbook_stream, header=None, usecols=[0, 1, 2, 3])
+            message_df = pd.read_csv(message_stream, header=None, usecols=[0, 1, 2, 3, 4, 5])
 
-                ticker, date = extract_info_from_filename(message_stream)
+            ticker, date = extract_info_from_filename(message_stream)
 
-                # Process data for prediction
-                message_df = add_date_ticker(message_df, date, ticker)
-                message_df, orderbook_df = data_preprocessing(message_df, orderbook_df, ticker_name=ticker)
-                X = prediction_feature(message_df, orderbook_df, labelled=False, standardise=True)
+            # Process data for prediction
+            message_df = add_date_ticker(message_df, date, ticker)
+            message_df, orderbook_df = data_preprocessing(message_df, orderbook_df, ticker_name=ticker)
+            X = prediction_feature(message_df, orderbook_df, labelled=False, standardise=True)
+    
+            # Convert the data to DMatrix
+            dmatrix = xgb.DMatrix(X, enable_categorical=True)
 
-                # Predict using the trained model
-                predictions = model.predict(X)
+            # Predict using the loaded model
+            pred_prob = model.predict(dmatrix)
+            preds = (pred_prob > 0.5).astype(int)  # Thresholding for binary classification
+            preds = preds.replace(0, -1)
 
-                for delta in delta_lst:
-                    if order_type == 'vis' or order_type == 'hid' or order_type == 'combined':
-                        df_merged = combined_order_imbalance(message_df, predictions, orderbook_df, delta=delta)
+            y_pred_df = pd.DataFrame({'pred_dir': preds,
+                                    'pred_prob': pred_prob})
+            y_pred_df.index = X.index
 
-                    elif order_type == 'comb_iceberg':
-                        df_merged = iceberg_order_imbalance(message_df, predictions, orderbook_df, delta=delta)
+            # Tag direction of hidden liquidity execution outside of bid-ask spread
+            y_pred_df = hid_outside_spread_tag(X, y_pred_df)
 
-                    elif order_type == 'agg' or order_type == 'size':
-                        df_merged = conditional_order_imbalance(message_df, predictions, orderbook_df, delta=delta, condition=order_type)
-                
-                    df_dict[delta].append(df_merged)
+
+            for delta in delta_lst:
+                if order_type == 'vis' or order_type == 'hid' or order_type == 'combined':
+                    df_merged = combined_order_imbalance(message_df, y_pred_df, orderbook_df, delta=delta)
+
+                elif order_type == 'comb_iceberg':
+                    df_merged = iceberg_order_imbalance(message_df, y_pred_df, orderbook_df, delta=delta)
+
+                elif order_type == 'agg' or order_type == 'size':
+                    df_merged = conditional_order_imbalance(message_df, y_pred_df, orderbook_df, delta=delta, condition=order_type)
+            
+                df_dict[delta].append(df_merged)
 
     # Concatenate the DataFrames for each key
     for key in df_dict:
-        df_dict[key] = pd.concat(df_dict[key], ignore_index=True)
+        df_dict[key] = pd.concat(df_dict[key])
 
     return df_dict
 
