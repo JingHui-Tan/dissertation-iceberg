@@ -105,62 +105,39 @@ def process_and_train_xgb(archive_path, model_path, params, num_boost_round=10, 
             message_stream = io.BytesIO(extracted_files[message_file].read())
             print("Processed files:", orderbook_file, message_file)
 
-            orderbook_iter = pd.read_csv(orderbook_stream, chunksize=chunk_size, header=None, usecols=[0, 1, 2, 3])
-            message_iter = pd.read_csv(message_stream, chunksize=chunk_size, header=None, usecols=[0, 1, 2, 3, 4, 5])
+            orderbook_chunk = pd.read_csv(orderbook_stream, header=None, usecols=[0, 1, 2, 3])
+            message_chunk = pd.read_csv(message_stream, header=None, usecols=[0, 1, 2, 3, 4, 5])
             ticker, date = extract_info_from_filename(message_file)
 
-            # Initialize accumulators for the chunks
-            accumulated_orderbook = []
-            accumulated_message = []
-            accumulated_length_hidden = 0
+            message_chunk = add_date_ticker(message_chunk, date, ticker)
 
-            for orderbook_chunk, message_chunk in zip(orderbook_iter, message_iter):
-                message_chunk = add_date_ticker(message_chunk, date, ticker)
-                print(message_chunk)
-                accumulated_orderbook.append(orderbook_chunk)
-                accumulated_message.append(message_chunk)
-                accumulated_length_hidden += len(message_chunk[message_chunk.iloc[:, 1] == 5])
-                
-                # If the accumulated data reaches the desired chunk size, process the chunks
-                if accumulated_length_hidden >= 50:
-                    # Concatenate the accumulated chunks
-                    orderbook_chunk = pd.concat(accumulated_orderbook)
-                    message_chunk = pd.concat(accumulated_message)
-                    
-                    # Reset accumulators
-                    accumulated_orderbook = []
-                    accumulated_message = []
+            message_chunk, orderbook_chunk = data_preprocessing(message_chunk, orderbook_chunk, ticker_name=ticker)
+            X, y = prediction_feature(message_chunk, orderbook_chunk, labelled=True, standardise=True)
+            # Map classes from -1 to 0
+            y = y.replace(-1, 0)
+            y = y.astype(int)
 
+            # Split each chunk into training and validation sets
+            X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2)
+            
+            dtrain_chunk = xgb.DMatrix(X_train, label=y_train, enable_categorical=True)
+            dval_chunk = xgb.DMatrix(X_val, label=y_val, enable_categorical=True)
 
-                    print(len(message_chunk[message_chunk.iloc[:, 1] == 5]))
-                    # Merge the two chunks on a common key, adjust key names if necessary
-                    message_chunk, orderbook_chunk = data_preprocessing(message_chunk, orderbook_chunk, ticker_name=ticker)
-                    X, y = prediction_feature(message_chunk, orderbook_chunk, labelled=True, standardise=True)
-                    # Map classes from -1 to 0
-                    y = y.replace(-1, 0)
-                    y = y.astype(int)
+            evals = [(dtrain_chunk, 'train'), (dval_chunk, 'eval')]
 
-                    # Split each chunk into training and validation sets
-                    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2)
-                    
-                    dtrain_chunk = xgb.DMatrix(X_train, label=y_train, enable_categorical=True)
-                    dval_chunk = xgb.DMatrix(X_val, label=y_val, enable_categorical=True)
+            # Update model with new chunk
+            if 'booster' in locals():
+                booster = xgb.train(params, dtrain_chunk, num_boost_round, evals, xgb_model=booster)
+            else:
+                booster = xgb.train(params, dtrain_chunk, num_boost_round, evals)
 
-                    evals = [(dtrain_chunk, 'train'), (dval_chunk, 'eval')]
+            # Predict on the validation set for the current chunk
+            preds = booster.predict(dval_chunk)
+            preds = (preds > 0.5).astype(int)  # Thresholding for binary classification
 
-                    # Update model with new chunk
-                    if 'booster' in locals():
-                        booster = xgb.train(params, dtrain_chunk, num_boost_round, evals, xgb_model=booster)
-                    else:
-                        booster = xgb.train(params, dtrain_chunk, num_boost_round, evals)
-        
-                    # Predict on the validation set for the current chunk
-                    preds = booster.predict(dval_chunk)
-                    preds = (preds > 0.5).astype(int)  # Thresholding for binary classification
-
-                    # Accumulate predictions and true labels
-                    all_preds.extend(preds)
-                    all_labels.extend(y_val)
+            # Accumulate predictions and true labels
+            all_preds.extend(preds)
+            all_labels.extend(y_val)
 
     # Compute overall accuracy
     overall_accuracy = accuracy_score(all_labels, all_preds)
@@ -190,7 +167,7 @@ def order_imbalance_calc(archive_path, model,
     with py7zr.SevenZipFile(archive_path, mode='r') as archive:
         filenames = archive.getnames()
         orderbook_files = [f for f in filenames if 'orderbook' in f]
-        message_files = [f for f in filenames if 'messages' in f]
+        message_files = [f for f in filenames if 'message' in f]
 
         for orderbook_file, message_file in zip(orderbook_files, message_files):
             extracted_files = archive.read([orderbook_file, message_file])
@@ -202,7 +179,7 @@ def order_imbalance_calc(archive_path, model,
             orderbook_df = pd.read_csv(orderbook_stream, header=None, usecols=[0, 1, 2, 3])
             message_df = pd.read_csv(message_stream, header=None, usecols=[0, 1, 2, 3, 4, 5])
 
-            ticker, date = extract_info_from_filename(message_stream)
+            ticker, date = extract_info_from_filename(message_file)
 
             # Process data for prediction
             message_df = add_date_ticker(message_df, date, ticker)
@@ -215,7 +192,8 @@ def order_imbalance_calc(archive_path, model,
             # Predict using the loaded model
             pred_prob = model.predict(dmatrix)
             preds = (pred_prob > 0.5).astype(int)  # Thresholding for binary classification
-            preds = preds.replace(0, -1)
+            preds[preds == 0] = -1
+            preds = preds.astype(int)
 
             y_pred_df = pd.DataFrame({'pred_dir': preds,
                                     'pred_prob': pred_prob})

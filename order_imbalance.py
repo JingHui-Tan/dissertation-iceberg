@@ -98,10 +98,11 @@ def order_imbalance(df_full, df_pred=None, df_ob=None, delta='30S', type='vis'):
     grouped['order_imbalance'] = grouped['order_imbalance'].fillna(0)
     grouped = calculate_log_returns(grouped)
 
-    grouped = filter_quantiles(grouped, 'log_ret')
-    grouped = filter_quantiles(grouped, 'fut_log_ret')
-    grouped = filter_quantiles(grouped, 'weighted_log_ret')
-    grouped = filter_quantiles(grouped, 'fut_weighted_log_ret')
+    ## Filter based on quantiles
+    # grouped = filter_quantiles(grouped, 'log_ret')
+    # grouped = filter_quantiles(grouped, 'fut_log_ret')
+    # grouped = filter_quantiles(grouped, 'weighted_log_ret')
+    # grouped = filter_quantiles(grouped, 'fut_weighted_log_ret')
 
     
     return grouped[:-1]
@@ -138,10 +139,11 @@ def iceberg_order_imbalance(df_full, df_pred, df_ob, delta='5min', weighted=Fals
     grouped['order_imbalance_ib'] = grouped['order_imbalance_ib'].fillna(0)
     grouped = calculate_log_returns(grouped)
 
-    grouped = filter_quantiles(grouped, 'log_ret')
-    grouped = filter_quantiles(grouped, 'fut_log_ret')
-    grouped = filter_quantiles(grouped, 'weighted_log_ret')
-    grouped = filter_quantiles(grouped, 'fut_weighted_log_ret')
+    ## Filter based on quantiles
+    # grouped = filter_quantiles(grouped, 'log_ret')
+    # grouped = filter_quantiles(grouped, 'fut_log_ret')
+    # grouped = filter_quantiles(grouped, 'weighted_log_ret')
+    # grouped = filter_quantiles(grouped, 'fut_weighted_log_ret')
 
 
     df_hid = order_imbalance(df_full=df_full, df_pred=df_pred, df_ob=df_ob, delta=delta, type='hid')

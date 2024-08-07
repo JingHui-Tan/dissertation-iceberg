@@ -259,7 +259,7 @@ def prediction_feature(df_m_mh, df_ob_mh, labelled=False, standardise=True):
     features_df = df_m_mh[df_m_mh['event_type'] == 5]
     features_df.drop(columns=['event_type', 'order_ID', 'price', 'direction', 'midprice'], inplace=True)
     numerical_columns = ['size']
-
+    
     # Standardise numerical columns
     if standardise:
         scaler = StandardScaler()
