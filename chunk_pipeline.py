@@ -166,8 +166,8 @@ def order_imbalance_calc(archive_path, model_path, model_name,
     """
     # Load the model from the JSON file
     model_path = os.path.join(model_path, model_name)
-    loaded_booster = xgb.Booster()
-    loaded_booster.load_model(model_path)
+    model = xgb.Booster()
+    model.load_model(model_path)
 
     df_dict = {key: [] for key in delta_lst}
     
