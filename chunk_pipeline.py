@@ -88,7 +88,7 @@ from order_imbalance import order_imbalance, combined_order_imbalance, condition
 #     return booster
 
 
-def process_and_train_xgb(archive_path, model_path, params, model_name,
+def process_and_train_xgb(archive_path, model_path, model_name, params,
                           num_boost_round=10, chunk_size=20000):
     """
     Extract 7z file, process CSVs in chunks, and train XGBoost classifier.
@@ -345,7 +345,7 @@ def get_data_in_chunks(df, chunk_size=100):
     for start in range(0, len(df), chunk_size):
         yield df[start:start + chunk_size]
 
-def calculate_t_values(model, df, X_coefficients, output, chunk_size=20):
+def calculate_t_values(model, df, X_coefficients, output, chunk_size=100):
     """Calculate t-values for the coefficients in the model."""
     residual_sum_of_squares = 0
     XtX_sum = np.zeros((len(X_coefficients) + 1, len(X_coefficients) + 1))  # Include intercept
@@ -362,22 +362,14 @@ def calculate_t_values(model, df, X_coefficients, output, chunk_size=20):
         X_chunk_with_intercept = np.hstack((intercept, X_chunk))
         XtX_sum += np.dot(X_chunk_with_intercept.T, X_chunk_with_intercept)
 
-        # Delete to free memory
-        del X_chunk, y_chunk, y_chunk_pred, residuals, intercept, X_chunk_with_intercept
-        gc.collect()
-
     # Calculate the variance of the residuals
     degrees_of_freedom = len(df) - len(X_coefficients) - 1
-
-    del df
-    gc.collect()
 
     variance_of_residuals = residual_sum_of_squares / degrees_of_freedom
 
     # Calculate the covariance matrix
     covariance_matrix = variance_of_residuals * inv(XtX_sum)
     standard_errors = np.sqrt(np.diag(covariance_matrix)[1:])
-    print(t_values)
     # Calculate t-values
     t_values = model.coef_ / standard_errors
     return t_values
@@ -407,6 +399,7 @@ def lm_analysis(df, order_type='combined', predictive=True, weighted_mp=False,
 
     X_coefficients = coefficients_dict[order_type]
     num_values = len(X_coefficients)
+    print(f'num_values is {num_values}')
 
     if momentum and weighted_mp:
         X_coefficients += ['weighted_log_ret']
@@ -432,13 +425,12 @@ def lm_analysis(df, order_type='combined', predictive=True, weighted_mp=False,
     try:
         logging.info("Model fit completed")
 
-
-        print(X_chunk)
         coefficients = sgd_reg.coef_
+        print(coefficients)
         t_values = calculate_t_values(sgd_reg, df, X_coefficients, output, chunk_size=100)
 
         logging.info("Coefficients and t_values obtained")
-
+        print(len(coefficients[:num_values].tolist()), len(t_values[:num_values].tolist()))
         return coefficients[:num_values].tolist(), t_values[:num_values].tolist()
     except Exception as e:
         logging.error(f"Error in final model fit: {e}")
@@ -454,9 +446,9 @@ def OI_results(df_dict, order_type='combined', predictive=True, weighted_mp=Fals
         'combined': ['timeframe', 'params_vis', 'tvals_vis', 'params_hid', 'tvals_hid'],
         'comb_iceberg': ['timeframe', 'params_vis', 'tvals_vis', 'params_hid',
                          'tvals_hid', 'params_ib', 'tvals_ib'],
-        'agg': ['timeframe', 'params_vis', 'tvals_vis', 'params_hid', 'tvals_hid',
+        'agg': ['timeframe', 'params_vis', 'tvals_vis',
                 'params_low', 'tvals_low', 'params_mid', 'tvals_mid', 'params_high', 'tvals_high'],
-        'size': ['timeframe', 'params_vis', 'tvals_vis', 'params_hid', 'tvals_hid',
+        'size': ['timeframe', 'params_vis', 'tvals_vis',
                  'params_small', 'tvals_small', 'params_mid', 'tvals_mid', 'params_large', 'tvals_large']
 
     }
@@ -482,5 +474,5 @@ def OI_results(df_dict, order_type='combined', predictive=True, weighted_mp=Fals
     
     logging.info("Process completed")
     logging.debug(f"LM Results: {lm_results}")
-    
+    print(col_names_dict[order_type])
     return pd.DataFrame(lm_results, columns=col_names_dict[order_type])
