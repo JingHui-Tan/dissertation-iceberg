@@ -88,7 +88,8 @@ from order_imbalance import order_imbalance, combined_order_imbalance, condition
 #     return booster
 
 
-def process_and_train_xgb(archive_path, model_path, params, num_boost_round=10, chunk_size=20000):
+def process_and_train_xgb(archive_path, model_path, params, model_name,
+                          num_boost_round=10, chunk_size=20000):
     """
     Extract 7z file, process CSVs in chunks, and train XGBoost classifier.
     """
@@ -147,7 +148,7 @@ def process_and_train_xgb(archive_path, model_path, params, num_boost_round=10, 
     print(f"Overall Accuracy: {overall_accuracy}")
 
     # Save the final model to the specified folder
-    model_path = os.path.join(model_path, 'xgboost_model.json')
+    model_path = os.path.join(model_path, model_name)
     booster.save_model(model_path)
 
     return booster
@@ -158,13 +159,13 @@ def process_and_train_xgb(archive_path, model_path, params, num_boost_round=10, 
 # archive_path = 'yourfile.7z'
 # model = process_and_train_hist_gb(archive_path)
 
-def order_imbalance_calc(archive_path, model_path,
+def order_imbalance_calc(archive_path, model_path, model_name,
                          delta_lst, order_type='combined'):
     """
     Extract 7z file, process CSVs, predict using the trained model and create OI dataframes dict.
     """
     # Load the model from the JSON file
-    model_path = os.path.join(model_path, 'xgboost_model.json')
+    model_path = os.path.join(model_path, model_name)
     loaded_booster = xgb.Booster()
     loaded_booster.load_model(model_path)
 
