@@ -81,7 +81,11 @@ def order_imbalance(df_full, df_pred=None, df_ob=None, delta='30S', type='vis'):
     else:
         print("Not Implemented")
         return
+    if df.empty:
+        return df
+    
     df['datetime_bins'] = df.index.get_level_values('datetime').ceil(delta)
+
 
     if type == 'hid':
         df = pd.merge(df.reset_index(), df_pred.reset_index(), on=['datetime', 'ticker', 'event_number']).set_index(['datetime', 'ticker', 'event_number'])
@@ -192,14 +196,20 @@ def conditional_order_imbalance(df_full, df_pred, df_ob, delta='5min', condition
     if condition == 'agg':
         for version, suffix in zip(['agg_low', 'agg_mid', 'agg_high'], ['_agg_low', '_agg_mid', '_agg_high']):
             df = order_imbalance(df_full=agg_order(df_full, df_pred, agg=version), df_pred=df_pred, df_ob=df_ob, delta=delta, type='hid')
-            df.rename(columns={'order_imbalance': f'order_imbalance{suffix}'}, inplace=True)
-            df_fin = df_fin.merge(df[['datetime_bins', f'order_imbalance{suffix}']], on='datetime_bins')
+            if not df.empty:
+                df.rename(columns={'order_imbalance': f'order_imbalance{suffix}'}, inplace=True)
+                df_fin = df_fin.merge(df[['datetime_bins', f'order_imbalance{suffix}']], on='datetime_bins')
+            else:
+                df[f'order_imbalance{suffix}'] = 0
 
     elif condition == 'size':
         for version in ['small', 'medium', 'large']:
             df = order_imbalance(df_full=size_order(df_full, df_pred, size=version), df_pred=df_pred, df_ob=df_ob, delta=delta, type='hid')
-            df.rename(columns={'order_imbalance': f'order_imbalance_{version}'}, inplace=True)
-            df_fin = df_fin.merge(df[['datetime_bins', f'order_imbalance_{version}']], on='datetime_bins')
+            if not df.empty:
+                df.rename(columns={'order_imbalance': f'order_imbalance_{version}'}, inplace=True)
+                df_fin = df_fin.merge(df[['datetime_bins', f'order_imbalance_{version}']], on='datetime_bins')
+            else:
+                df[f'order_imbalance_{version}'] = 0
 
     return df_fin
 
