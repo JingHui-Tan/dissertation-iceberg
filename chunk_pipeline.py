@@ -399,7 +399,6 @@ def lm_analysis(df, order_type='combined', predictive=True, weighted_mp=False,
 
     X_coefficients = coefficients_dict[order_type]
     num_values = len(X_coefficients)
-    print(f'num_values is {num_values}')
 
     if momentum and weighted_mp:
         X_coefficients += ['weighted_log_ret']
@@ -426,11 +425,9 @@ def lm_analysis(df, order_type='combined', predictive=True, weighted_mp=False,
         logging.info("Model fit completed")
 
         coefficients = sgd_reg.coef_
-        print(coefficients)
         t_values = calculate_t_values(sgd_reg, df, X_coefficients, output, chunk_size=100)
 
         logging.info("Coefficients and t_values obtained")
-        print(len(coefficients[:num_values].tolist()), len(t_values[:num_values].tolist()))
         return coefficients[:num_values].tolist(), t_values[:num_values].tolist()
     except Exception as e:
         logging.error(f"Error in final model fit: {e}")
@@ -474,5 +471,4 @@ def OI_results(df_dict, order_type='combined', predictive=True, weighted_mp=Fals
     
     logging.info("Process completed")
     logging.debug(f"LM Results: {lm_results}")
-    print(col_names_dict[order_type])
     return pd.DataFrame(lm_results, columns=col_names_dict[order_type])
