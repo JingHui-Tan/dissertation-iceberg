@@ -158,12 +158,16 @@ def process_and_train_xgb(archive_path, model_path, params, num_boost_round=10, 
 # archive_path = 'yourfile.7z'
 # model = process_and_train_hist_gb(archive_path)
 
-def order_imbalance_calc(archive_path, model,
+def order_imbalance_calc(archive_path, model_path,
                          delta_lst, order_type='combined'):
     """
     Extract 7z file, process CSVs, predict using the trained model and create OI dataframes dict.
     """
-    # Load the trained model
+    # Load the model from the JSON file
+    model_path = os.path.join(model_path, 'xgboost_model.json')
+    loaded_booster = xgb.Booster()
+    loaded_booster.load_model(model_path)
+
     df_dict = {key: [] for key in delta_lst}
     
 
@@ -340,7 +344,7 @@ def get_data_in_chunks(df, chunk_size=100):
     for start in range(0, len(df), chunk_size):
         yield df[start:start + chunk_size]
 
-def calculate_t_values(model, df, X_coefficients, output, chunk_size=100):
+def calculate_t_values(model, df, X_coefficients, output, chunk_size=20):
     """Calculate t-values for the coefficients in the model."""
     residual_sum_of_squares = 0
     XtX_sum = np.zeros((len(X_coefficients) + 1, len(X_coefficients) + 1))  # Include intercept
@@ -366,13 +370,13 @@ def calculate_t_values(model, df, X_coefficients, output, chunk_size=100):
 
     del df
     gc.collect()
-    
+
     variance_of_residuals = residual_sum_of_squares / degrees_of_freedom
 
     # Calculate the covariance matrix
     covariance_matrix = variance_of_residuals * inv(XtX_sum)
     standard_errors = np.sqrt(np.diag(covariance_matrix)[1:])
-
+    print(t_values)
     # Calculate t-values
     t_values = model.coef_ / standard_errors
     return t_values
@@ -409,7 +413,7 @@ def lm_analysis(df, order_type='combined', predictive=True, weighted_mp=False,
     elif momentum and not weighted_mp:
         X_coefficients += ['log_ret']
 
-    for chunk in get_data_in_chunks(df, chunk_size=100):
+    for chunk in get_data_in_chunks(df, chunk_size=20):
         try:
             X_chunk = chunk[X_coefficients].values
             y_chunk = chunk[output].values
@@ -427,8 +431,12 @@ def lm_analysis(df, order_type='combined', predictive=True, weighted_mp=False,
     try:
         logging.info("Model fit completed")
 
+
+        print(X_chunk)
         coefficients = sgd_reg.coef_
         t_values = calculate_t_values(sgd_reg, df, X_coefficients, output, chunk_size=100)
+
+        logging.info("Coefficients and t_values obtained")
 
         return coefficients[:num_values].tolist(), t_values[:num_values].tolist()
     except Exception as e:
