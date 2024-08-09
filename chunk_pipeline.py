@@ -151,7 +151,7 @@ def process_and_train_xgb(archive_path, model_path, model_name, params,
     model_path = os.path.join(model_path, model_name)
     booster.save_model(model_path)
 
-    return booster
+    return booster, overall_accuracy
 
 
 
@@ -159,15 +159,16 @@ def process_and_train_xgb(archive_path, model_path, model_name, params,
 # archive_path = 'yourfile.7z'
 # model = process_and_train_hist_gb(archive_path)
 
-def order_imbalance_calc(archive_path, model_path, model_name,
-                         delta_lst, order_type='combined'):
+def order_imbalance_calc(archive_path, delta_lst, model=None,
+                         model_path=None, model_name=None, order_type='combined'):
     """
     Extract 7z file, process CSVs, predict using the trained model and create OI dataframes dict.
     """
     # Load the model from the JSON file
-    model_path = os.path.join(model_path, model_name)
-    model = xgb.Booster()
-    model.load_model(model_path)
+    if not model:
+        model_path = os.path.join(model_path, model_name)
+        model = xgb.Booster()
+        model.load_model(model_path)
 
     df_dict = {key: [] for key in delta_lst}
     
