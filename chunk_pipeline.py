@@ -346,10 +346,14 @@ def get_data_in_chunks(df, chunk_size=100):
     for start in range(0, len(df), chunk_size):
         yield df[start:start + chunk_size]
 
-def calculate_t_values(model, df, X_coefficients, output, chunk_size=100):
-    """Calculate t-values for the coefficients in the model."""
+def calculate_t_values_adj_R2(model, df, X_coefficients, output, chunk_size=100):
+    """Calculate t-values for the coefficients in the model and adjusted R^2."""
     residual_sum_of_squares = 0
     XtX_sum = np.zeros((len(X_coefficients) + 1, len(X_coefficients) + 1))  # Include intercept
+
+    # Calculate total sum of squares
+    y_mean = np.mean(df[output])
+    total_sum_of_squares = 0
 
     for chunk in get_data_in_chunks(df, chunk_size):
         X_chunk = chunk[X_coefficients].values
@@ -357,6 +361,9 @@ def calculate_t_values(model, df, X_coefficients, output, chunk_size=100):
         y_chunk_pred = model.predict(X_chunk)
         residuals = y_chunk - y_chunk_pred
         residual_sum_of_squares += np.dot(residuals, residuals)
+        
+        # Calculate total sum of squares incrementally
+        total_sum_of_squares += np.sum((y_chunk - y_mean) ** 2)
 
         # Add intercept to X matrix directly
         intercept = np.ones((X_chunk.shape[0], 1))
@@ -364,16 +371,24 @@ def calculate_t_values(model, df, X_coefficients, output, chunk_size=100):
         XtX_sum += np.dot(X_chunk_with_intercept.T, X_chunk_with_intercept)
 
     # Calculate the variance of the residuals
-    degrees_of_freedom = len(df) - len(X_coefficients) - 1
-
+    n = len(df)
+    p = len(X_coefficients)
+    degrees_of_freedom = n - p - 1
     variance_of_residuals = residual_sum_of_squares / degrees_of_freedom
 
     # Calculate the covariance matrix
     covariance_matrix = variance_of_residuals * inv(XtX_sum)
     standard_errors = np.sqrt(np.diag(covariance_matrix)[1:])
+
     # Calculate t-values
     t_values = model.coef_ / standard_errors
-    return t_values
+
+    # Calculate R-squared and adjusted R-squared
+    r_squared = 1 - (residual_sum_of_squares / total_sum_of_squares)
+    adjusted_r_squared = 1 - ((1 - r_squared) * (n - 1) / degrees_of_freedom)
+
+    return t_values, adjusted_r_squared
+    
 
 def lm_analysis(df, order_type='combined', predictive=True, weighted_mp=False,
                 momentum=False):
@@ -426,10 +441,10 @@ def lm_analysis(df, order_type='combined', predictive=True, weighted_mp=False,
         logging.info("Model fit completed")
 
         coefficients = sgd_reg.coef_
-        t_values = calculate_t_values(sgd_reg, df, X_coefficients, output, chunk_size=100)
+        t_values, adj_r2 = calculate_t_values_adj_R2(sgd_reg, df, X_coefficients, output, chunk_size=100)
 
         logging.info("Coefficients and t_values obtained")
-        return coefficients[:num_values].tolist(), t_values[:num_values].tolist()
+        return coefficients[:num_values].tolist(), t_values[:num_values].tolist(), adj_r2
     except Exception as e:
         logging.error(f"Error in final model fit: {e}")
         return [], []
@@ -439,15 +454,15 @@ def OI_results(df_dict, order_type='combined', predictive=True, weighted_mp=Fals
     lm_results = []
 
     col_names_dict = {
-        'vis': ['timeframe', 'params_vis', 'tvals_vis'],
-        'hid': ['timeframe', 'params_hid', 'tvals_hid'],
-        'combined': ['timeframe', 'params_vis', 'tvals_vis', 'params_hid', 'tvals_hid'],
+        'vis': ['timeframe', 'params_vis', 'tvals_vis', 'adj_R2'],
+        'hid': ['timeframe', 'params_hid', 'tvals_hid', 'adj_R2'],
+        'combined': ['timeframe', 'params_vis', 'tvals_vis', 'params_hid', 'tvals_hid', 'adj_R2'],
         'comb_iceberg': ['timeframe', 'params_vis', 'tvals_vis', 'params_hid',
-                         'tvals_hid', 'params_ib', 'tvals_ib'],
+                         'tvals_hid', 'params_ib', 'tvals_ib', 'adj_R2'],
         'agg': ['timeframe', 'params_vis', 'tvals_vis',
-                'params_low', 'tvals_low', 'params_mid', 'tvals_mid', 'params_high', 'tvals_high'],
+                'params_low', 'tvals_low', 'params_mid', 'tvals_mid', 'params_high', 'tvals_high', 'adj_R2'],
         'size': ['timeframe', 'params_vis', 'tvals_vis',
-                 'params_small', 'tvals_small', 'params_mid', 'tvals_mid', 'params_large', 'tvals_large']
+                 'params_small', 'tvals_small', 'params_mid', 'tvals_mid', 'params_large', 'tvals_large', 'adj_R2']
 
     }
     logging.info("Process started")
@@ -458,13 +473,14 @@ def OI_results(df_dict, order_type='combined', predictive=True, weighted_mp=Fals
         row_result = [delta]
         
         try:
-            coefficients, t_values = lm_analysis(df_dict[delta], order_type=order_type, 
+            coefficients, t_values, adj_r2 = lm_analysis(df_dict[delta], order_type=order_type, 
                                                  predictive=predictive, weighted_mp=weighted_mp, momentum=momentum)
 
             for coef, t_val in zip(coefficients, t_values):
                 row_result += [coef]
                 row_result += [t_val]
-            
+
+            row_result += [adj_r2]
             lm_results.append(row_result)
         except Exception as e:
             logging.error(f"Error in lm_analysis for delta {delta}: {e}")
