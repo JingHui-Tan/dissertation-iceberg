@@ -200,7 +200,7 @@ def conditional_order_imbalance(df_full, df_pred, df_ob, delta='5min', condition
                 df.rename(columns={'order_imbalance': f'order_imbalance{suffix}'}, inplace=True)
                 df_fin = df_fin.merge(df[['datetime_bins', f'order_imbalance{suffix}']], on='datetime_bins')
             else:
-                df[f'order_imbalance{suffix}'] = 0
+                df_fin[f'order_imbalance{suffix}'] = 0
 
     elif condition == 'size':
         for version in ['small', 'medium', 'large']:
@@ -209,7 +209,7 @@ def conditional_order_imbalance(df_full, df_pred, df_ob, delta='5min', condition
                 df.rename(columns={'order_imbalance': f'order_imbalance_{version}'}, inplace=True)
                 df_fin = df_fin.merge(df[['datetime_bins', f'order_imbalance_{version}']], on='datetime_bins')
             else:
-                df[f'order_imbalance_{version}'] = 0
+                df_fin[f'order_imbalance_{version}'] = 0
 
     return df_fin
 
