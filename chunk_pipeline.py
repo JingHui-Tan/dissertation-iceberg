@@ -399,7 +399,7 @@ def lm_analysis(df, order_type='combined', predictive=True, weighted_mp=False,
         output = 'fut_weighted_log_ret' if predictive else "weighted_log_ret"    
 
     # Initialize the SGDRegressor
-    sgd_reg = SGDRegressor(max_iter=1000, tol=1e-3)
+    sgd_reg = SGDRegressor(max_iter=1000, tol=1e-6)
 
     # Fit the model in chunks
     coefficients_dict = {
