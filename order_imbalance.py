@@ -7,7 +7,8 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from statsmodels.graphics.gofplots import ProbPlot
 import statsmodels.formula.api as smf
-
+import yfinance as yf
+from datetime import timedelta
 
 
 ## Process:
@@ -42,11 +43,29 @@ def iceberg_tag(df, ib_delta):
 
 
 
-def calculate_log_returns(grouped):
+def calculate_log_returns(grouped, ticker=None):
     grouped['log_ret'] = np.log(grouped['last_midprice']) - np.log(grouped['first_midprice'])
     grouped['fut_log_ret'] = grouped['log_ret'].shift(-1)
     grouped['weighted_log_ret'] = np.log(grouped['last_weighted_mp']) - np.log(grouped['first_weighted_mp'])
     grouped['fut_weighted_log_ret'] = grouped['weighted_log_ret'].shift(-1)
+
+
+    # Define ticker and date
+    current_date = grouped['datetime_bins'][0].date()
+
+    # Get the data for the ticker
+    hist = yf.Ticker(ticker).history(start=current_date, end=current_date + timedelta(days=7))
+    day_close = hist.loc[hist.index.date == current_date, 'Close'].iloc[0]
+
+    next_trading_day_data = hist[hist.index.date > current_date].head(1)
+    next_day_open = next_trading_day_data['Open'].iloc[0]
+    next_day_close = next_trading_day_data['Close'].iloc[0]
+
+    grouped['ret_tClose'] = np.log(day_close) - np.log(grouped['first_midprice'])
+    grouped['fret_tClose'] = grouped['ret_tClose'].shift(-1)
+
+    grouped['fret_ClOp'] = np.log(next_day_open) - np.log(day_close)
+    grouped['fret_ClCl'] = np.log(next_day_close) - np.log(day_close)
     return grouped
 
 
@@ -99,8 +118,10 @@ def order_imbalance(df_full, df_pred=None, df_ob=None, delta='30S', type='vis'):
         })
     ).reset_index()
 
+    ticker = df_full.index.get_level_values('ticker')[0]
+
     grouped['order_imbalance'] = grouped['order_imbalance'].fillna(0)
-    grouped = calculate_log_returns(grouped)
+    grouped = calculate_log_returns(grouped, ticker=ticker)
 
     ## Filter based on quantiles
     # grouped = filter_quantiles(grouped, 'log_ret')
@@ -215,15 +236,24 @@ def conditional_order_imbalance(df_full, df_pred, df_ob, delta='5min', condition
 
 
 
-def lm_results(df_full, df_pred, df_ob, delta_lst, order_type='combined', predictive=True, weighted_mp=False,
+def lm_results(df_full, df_pred, df_ob, delta_lst, order_type='combined', predictive=True, ret_type='log_ret',
                momentum=False):
-
-    if weighted_mp==False:
+    
+    if ret_type == 'log_ret':
         y = "fut_log_ret" if predictive else "log_ret"
         x_momentum = "+ log_ret" if momentum else ""
-    else:
+
+    elif ret_type == 'weighted_mp':
         y = 'fut_weighted_log_ret' if predictive else "weighted_log_ret"
         x_momentum = "+ weighted_log_ret" if momentum else ""
+
+    elif ret_type == 'tClose':
+        y = "fret_tClose" if predictive else "ret_tClose"
+        x_momentum = "+ ret_tClose" if momentum else ""
+    
+    elif ret_type == 'ClOp' or ret_type == 'ClCl':
+        y = f"fret_{ret_type}"
+
     
     params_lst = []
     tvalues_lst = []

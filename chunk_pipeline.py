@@ -390,13 +390,20 @@ def calculate_t_values_adj_R2(model, df, X_coefficients, output, chunk_size=100)
     return t_values, adjusted_r_squared
     
 
-def lm_analysis(df, order_type='combined', predictive=True, weighted_mp=False,
+def lm_analysis(df, order_type='combined', predictive=True, ret_type='log_ret',
                 momentum=False):
     
-    if weighted_mp==False:
+    if ret_type == 'log_ret':
         output = "fut_log_ret" if predictive else "log_ret"
-    else:
-        output = 'fut_weighted_log_ret' if predictive else "weighted_log_ret"    
+
+    elif ret_type == 'weighted_mp':
+        output = 'fut_weighted_log_ret' if predictive else "weighted_log_ret"
+
+    elif ret_type == 'tClose':
+        output = "fret_tClose" if predictive else "ret_tClose"
+    
+    elif ret_type == 'ClOp' or ret_type == 'ClCl':
+        output = f"fret_{ret_type}"
 
     # Initialize the SGDRegressor
     sgd_reg = SGDRegressor(max_iter=1000, tol=1e-6)
@@ -416,11 +423,14 @@ def lm_analysis(df, order_type='combined', predictive=True, weighted_mp=False,
     X_coefficients = coefficients_dict[order_type]
     num_values = len(X_coefficients)
 
-    if momentum and weighted_mp:
+    if momentum and ret_type == 'weighted_mp':
         X_coefficients += ['weighted_log_ret']
     
-    elif momentum and not weighted_mp:
+    elif momentum and ret_type == 'log_ret':
         X_coefficients += ['log_ret']
+
+    elif momentum and ret_type == 'tClose':
+        X_coefficients += ['ret_tClose']
 
     for chunk in get_data_in_chunks(df, chunk_size=20):
         try:
@@ -449,7 +459,7 @@ def lm_analysis(df, order_type='combined', predictive=True, weighted_mp=False,
         logging.error(f"Error in final model fit: {e}")
         return [], []
 
-def OI_results(df_dict, order_type='combined', predictive=True, weighted_mp=False,
+def OI_results(df_dict, order_type='combined', predictive=True, ret_type='log_ret',
                 momentum=False):
     lm_results = []
 
@@ -474,7 +484,7 @@ def OI_results(df_dict, order_type='combined', predictive=True, weighted_mp=Fals
         
         try:
             coefficients, t_values, adj_r2 = lm_analysis(df_dict[delta], order_type=order_type, 
-                                                 predictive=predictive, weighted_mp=weighted_mp, momentum=momentum)
+                                                 predictive=predictive, ret_type=ret_type, momentum=momentum)
 
             for coef, t_val in zip(coefficients, t_values):
                 row_result += [coef]
