@@ -9,10 +9,13 @@ from statsmodels.graphics.gofplots import ProbPlot
 import statsmodels.formula.api as smf
 import yfinance as yf
 from datetime import timedelta
+import logging
 
 
 ## Process:
 ## We fit order_imbalance and then remove outliers based on 90% quantile (for log returns and future log returns)
+
+logging.getLogger().setLevel(logging.WARNING)
 
 
 def iceberg_tag(df, ib_delta):
