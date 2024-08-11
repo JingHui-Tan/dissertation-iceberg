@@ -58,6 +58,7 @@ def calculate_log_returns(grouped, ticker=None):
 
     # Get the data for the ticker
     hist = yf.Ticker(ticker).history(start=current_date, end=current_date + timedelta(days=7))
+    day_open = hist.loc[hist.index.date == current_date, 'Open'].iloc[0]
     day_close = hist.loc[hist.index.date == current_date, 'Close'].iloc[0]
 
     next_trading_day_data = hist[hist.index.date > current_date].head(1)
@@ -66,6 +67,8 @@ def calculate_log_returns(grouped, ticker=None):
 
     grouped['ret_tClose'] = np.log(day_close) - np.log(grouped['first_midprice'])
     grouped['fret_tClose'] = grouped['ret_tClose'].shift(-1)
+    grouped['daily_ret'] = np.log(day_close) - np.log(day_open)
+    grouped['fut_daily_ret'] = np.log(next_day_close) - np.log(next_day_open)
 
     grouped['fret_ClOp'] = np.log(next_day_open) - np.log(day_close)
     grouped['fret_ClCl'] = np.log(next_day_close) - np.log(day_close)
@@ -106,7 +109,11 @@ def order_imbalance(df_full, df_pred=None, df_ob=None, delta='30S', type='vis'):
     if df.empty:
         return df
     
-    df['datetime_bins'] = df.index.get_level_values('datetime').ceil(delta)
+    if delta == 'daily':
+        df['datetime_bins'] = df.index.get_level_values('datetime').normalize()
+
+    else:
+        df['datetime_bins'] = df.index.get_level_values('datetime').ceil(delta)
 
 
     if type == 'hid':
@@ -126,20 +133,24 @@ def order_imbalance(df_full, df_pred=None, df_ob=None, delta='30S', type='vis'):
     grouped['order_imbalance'] = grouped['order_imbalance'].fillna(0)
     grouped = calculate_log_returns(grouped, ticker=ticker)
 
+
     ## Filter based on quantiles
     # grouped = filter_quantiles(grouped, 'log_ret')
     # grouped = filter_quantiles(grouped, 'fut_log_ret')
     # grouped = filter_quantiles(grouped, 'weighted_log_ret')
     # grouped = filter_quantiles(grouped, 'fut_weighted_log_ret')
 
-    
-    return grouped[:-1]
+    if delta == "daily":
+        return grouped
+    else:
+        return grouped[:-1]
 
 
 
 def combined_order_imbalance(df_full, df_pred, df_ob, delta='5min'):
     df_vis = order_imbalance(df_full=df_full, df_ob=df_ob, delta=delta, type='vis')
     df_hid = order_imbalance(df_full=df_full, df_ob=df_ob, df_pred=df_pred, delta=delta, type='hid')
+
 
     return df_vis.merge(df_hid[['datetime_bins', 'order_imbalance']], on='datetime_bins', suffixes=('_vis', '_hid'))
 
@@ -151,7 +162,13 @@ def iceberg_order_imbalance(df_full, df_pred, df_ob, delta='5min', weighted=Fals
     df_full['weighted_mp'] = weight * df_ob['ask_price_1'] + (1 - weight) * df_ob['bid_price_1']
     ib_delta = '1ms'
     df = iceberg_tag(df_full, ib_delta)
-    df['datetime_bins'] = df.index.get_level_values('datetime').ceil(delta)
+
+    if delta == 'daily':
+        df['datetime_bins'] = df.index.get_level_values('datetime').normalize()
+
+    else:
+        df['datetime_bins'] = df.index.get_level_values('datetime').ceil(delta)
+
     grouped = df.groupby('datetime_bins').apply(
         lambda x: pd.Series({
             'order_imbalance_vis': calculate_order_imbalance(x[x['iceberg'] == 0], 'direction', 'size'),
@@ -166,6 +183,7 @@ def iceberg_order_imbalance(df_full, df_pred, df_ob, delta='5min', weighted=Fals
     grouped['order_imbalance_vis'] = grouped['order_imbalance_vis'].fillna(0)
     grouped['order_imbalance_ib'] = grouped['order_imbalance_ib'].fillna(0)
     grouped = calculate_log_returns(grouped)
+
 
     ## Filter based on quantiles
     # grouped = filter_quantiles(grouped, 'log_ret')
@@ -256,6 +274,9 @@ def lm_results(df_full, df_pred, df_ob, delta_lst, order_type='combined', predic
     
     elif ret_type == 'ClOp' or ret_type == 'ClCl':
         y = f"fret_{ret_type}"
+
+    elif ret_type == 'daily_ret':
+        y = "fut_daily_ret"
 
     
     params_lst = []

@@ -221,7 +221,7 @@ def order_imbalance_calc(archive_path, delta_lst, model=None,
 
                 elif order_type == 'agg' or order_type == 'size':
                     df_merged = conditional_order_imbalance(message_df, y_pred_df, orderbook_df, delta=delta, condition=order_type)
-            
+
                 df_dict[delta].append(df_merged)
 
     # Concatenate the DataFrames for each key
@@ -405,6 +405,9 @@ def lm_analysis(df, order_type='combined', predictive=True, ret_type='log_ret',
     elif ret_type == 'ClOp' or ret_type == 'ClCl':
         output = f"fret_{ret_type}"
 
+    elif ret_type == 'daily_ret':
+        output = "fut_daily_ret"
+
     # Initialize the SGDRegressor
     sgd_reg = SGDRegressor(max_iter=1000, tol=1e-6)
 
@@ -431,6 +434,9 @@ def lm_analysis(df, order_type='combined', predictive=True, ret_type='log_ret',
 
     elif momentum and ret_type == 'tClose':
         X_coefficients += ['ret_tClose']
+    
+    elif momentum and ret_type == 'daily_ret':
+        X_coefficients += ['daily_ret']
 
     for chunk in get_data_in_chunks(df, chunk_size=20):
         try:
@@ -481,7 +487,6 @@ def OI_results(df_dict, order_type='combined', predictive=True, ret_type='log_re
     for delta in df_dict:
         logging.info(f'Currently fitting for delta: {delta}')
         row_result = [delta]
-        
         try:
             coefficients, t_values, adj_r2 = lm_analysis(df_dict[delta], order_type=order_type, 
                                                  predictive=predictive, ret_type=ret_type, momentum=momentum)
