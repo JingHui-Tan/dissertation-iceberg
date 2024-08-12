@@ -402,11 +402,11 @@ def lm_analysis(df, order_type='combined', predictive=True, ret_type='log_ret',
     elif ret_type == 'tClose':
         output = "fret_tClose" if predictive else "ret_tClose"
     
-    elif ret_type == 'ClOp' or ret_type == 'ClCl':
+    elif ret_type == 'ClOp' or ret_type == 'ClCl' or ret_type == 'ClOp_ex' or ret_type == 'ClCl_ex':
         output = f"fret_{ret_type}"
 
-    elif ret_type == 'daily_ret':
-        output = "fut_daily_ret"
+    elif ret_type == 'daily_ret' or ret_type == 'daily_ret_ex':
+        output = f"fut_{ret_type}"
 
     # Initialize the SGDRegressor
     sgd_reg = SGDRegressor(max_iter=1000, tol=1e-6)
@@ -435,8 +435,8 @@ def lm_analysis(df, order_type='combined', predictive=True, ret_type='log_ret',
     elif momentum and ret_type == 'tClose':
         X_coefficients += ['ret_tClose']
     
-    elif momentum and ret_type == 'daily_ret':
-        X_coefficients += ['daily_ret']
+    elif momentum and (ret_type == 'daily_ret' or ret_type == 'daily_ret_ex'):
+        X_coefficients += [f'{ret_type}']
 
     for chunk in get_data_in_chunks(df, chunk_size=20):
         try:

@@ -47,6 +47,7 @@ def iceberg_tag(df, ib_delta):
 
 
 def calculate_log_returns(grouped, ticker=None):
+
     grouped['log_ret'] = np.log(grouped['last_midprice']) - np.log(grouped['first_midprice'])
     grouped['fut_log_ret'] = grouped['log_ret'].shift(-1)
     grouped['weighted_log_ret'] = np.log(grouped['last_weighted_mp']) - np.log(grouped['first_weighted_mp'])
@@ -65,6 +66,17 @@ def calculate_log_returns(grouped, ticker=None):
     next_day_open = next_trading_day_data['Open'].iloc[0]
     next_day_close = next_trading_day_data['Close'].iloc[0]
 
+
+    # Get data for SPY
+    hist_SPY = yf.Ticker('SPY').history(start=current_date, end=current_date + timedelta(days=7))
+    day_open_SPY = hist_SPY.loc[hist_SPY.index.date == current_date, 'Open'].iloc[0]
+    day_close_SPY = hist_SPY.loc[hist_SPY.index.date == current_date, 'Close'].iloc[0]
+
+    next_trading_day_data_SPY = hist_SPY[hist_SPY.index.date > current_date].head(1)
+    next_day_open_SPY = next_trading_day_data_SPY['Open'].iloc[0]
+    next_day_close_SPY = next_trading_day_data_SPY['Close'].iloc[0]
+
+
     grouped['ret_tClose'] = np.log(day_close) - np.log(grouped['first_midprice'])
     grouped['fret_tClose'] = grouped['ret_tClose'].shift(-1)
     grouped['daily_ret'] = np.log(day_close) - np.log(day_open)
@@ -72,6 +84,18 @@ def calculate_log_returns(grouped, ticker=None):
 
     grouped['fret_ClOp'] = np.log(next_day_open) - np.log(day_close)
     grouped['fret_ClCl'] = np.log(next_day_close) - np.log(day_close)
+
+    grouped['daily_ret_ex'] = ((np.log(day_close) - np.log(day_open)) 
+                               - (np.log(day_close_SPY) - np.log(day_open_SPY)))
+    grouped['fut_daily_ret_ex'] = ((np.log(next_day_close) - np.log(next_day_open)) 
+                               - (np.log(next_day_close_SPY) - np.log(next_day_open_SPY)))
+
+    grouped['fret_ClOp_ex'] = ((np.log(next_day_open) - np.log(day_close)) 
+                               - (np.log(next_day_open_SPY) - np.log(day_close_SPY)))
+    grouped['fret_ClCl_ex'] = ((np.log(next_day_close) - np.log(day_close)) 
+                               - (np.log(next_day_close_SPY) - np.log(day_close_SPY)))
+
+
     return grouped
 
 
