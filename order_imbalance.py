@@ -44,18 +44,34 @@ def iceberg_tag(df, ib_delta):
 
 
 
-
-
-def calculate_log_returns(grouped, ticker=None):
-
+def calculate_log_returns(grouped, delta, ticker=None):
     grouped['log_ret'] = np.log(grouped['last_midprice']) - np.log(grouped['first_midprice'])
     grouped['fut_log_ret'] = grouped['log_ret'].shift(-1)
     grouped['weighted_log_ret'] = np.log(grouped['last_weighted_mp']) - np.log(grouped['first_weighted_mp'])
     grouped['fut_weighted_log_ret'] = grouped['weighted_log_ret'].shift(-1)
 
-
     # Define ticker and date
     current_date = grouped['datetime_bins'][0].date()
+
+    # Get market excess returns
+    SPY_data_loc = f"/nfs/home/jingt/dissertation-iceberg/data/SPY_data/SPY_{current_date}.csv"
+    SPY_data = pd.read_csv(SPY_data_loc)
+
+    SPY_data['datetime_bins'] = pd.to_datetime(SPY_data['datetime_bins'])
+    SPY_data.rename(columns={"datetime_bins": "datetime_bins_prev"}, inplace=True)
+    SPY_data.set_index("datetime_bins_prev", inplace=True)
+
+    SPY_data['datetime_bins'] = SPY_data.index.ceil(delta)
+
+    # Group by the datetime_bins and calculate the log returns
+    SPY_returns = SPY_data.groupby("datetime_bins").apply(
+        lambda x: pd.Series({
+            'log_ret': np.log(x['last_midprice'].iloc[-1]) - np.log(x['first_midprice'].iloc[0])
+        })
+    ).reset_index()
+
+    grouped['log_ret_ex'] = grouped['log_ret'] - SPY_returns['log_ret']
+    grouped['fut_log_ret_ex'] = grouped['log_ret_ex'].shift(-1)
 
     # Get the data for the ticker
     hist = yf.Ticker(ticker).history(start=current_date, end=current_date + timedelta(days=7))
@@ -132,7 +148,7 @@ def order_imbalance(df_full, df_pred=None, df_ob=None, delta='30S', type='vis'):
         return
     if df.empty:
         return df
-    
+
     if delta == 'daily':
         df['datetime_bins'] = df.index.get_level_values('datetime').normalize()
 
@@ -155,7 +171,7 @@ def order_imbalance(df_full, df_pred=None, df_ob=None, delta='30S', type='vis'):
     ticker = df_full.index.get_level_values('ticker')[0]
 
     grouped['order_imbalance'] = grouped['order_imbalance'].fillna(0)
-    grouped = calculate_log_returns(grouped, ticker=ticker)
+    grouped = calculate_log_returns(grouped, delta=delta, ticker=ticker)
 
 
     ## Filter based on quantiles
@@ -206,7 +222,7 @@ def iceberg_order_imbalance(df_full, df_pred, df_ob, delta='5min', weighted=Fals
 
     grouped['order_imbalance_vis'] = grouped['order_imbalance_vis'].fillna(0)
     grouped['order_imbalance_ib'] = grouped['order_imbalance_ib'].fillna(0)
-    grouped = calculate_log_returns(grouped)
+    grouped = calculate_log_returns(grouped, delta=delta)
 
 
     ## Filter based on quantiles
