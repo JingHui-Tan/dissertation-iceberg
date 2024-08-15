@@ -160,7 +160,8 @@ def process_and_train_xgb(archive_path, model_path, model_name, params,
 # model = process_and_train_hist_gb(archive_path)
 
 def order_imbalance_calc(archive_path, delta_lst, model=None,
-                         model_path=None, model_name=None, order_type='combined'):
+                         model_path=None, model_name=None, order_type='combined',
+                         specific_date=None):
     """
     Extract 7z file, process CSVs, predict using the trained model and create OI dataframes dict.
     """
@@ -175,8 +176,13 @@ def order_imbalance_calc(archive_path, delta_lst, model=None,
 
     with py7zr.SevenZipFile(archive_path, mode='r') as archive:
         filenames = archive.getnames()
-        orderbook_files = [f for f in filenames if 'orderbook' in f]
-        message_files = [f for f in filenames if 'message' in f]
+        if not specific_date:
+            orderbook_files = [f for f in filenames if 'orderbook' in f ]
+            message_files = [f for f in filenames if 'message' in f]
+    
+        else:
+            orderbook_files = [f for f in filenames if 'orderbook' in f and specific_date in f]
+            message_files = [f for f in filenames if 'message' in f and specific_date in f]
 
         for orderbook_file, message_file in zip(orderbook_files, message_files):
             extracted_files = archive.read([orderbook_file, message_file])
@@ -395,6 +401,9 @@ def lm_analysis(df, order_type='combined', predictive=True, ret_type='log_ret',
     
     if ret_type == 'log_ret':
         output = "fut_log_ret" if predictive else "log_ret"
+    
+    elif ret_type == 'log_ret_ex':
+        output = "fut_log_ret_ex" if predictive else "log_ret_ex"
 
     elif ret_type == 'weighted_mp':
         output = 'fut_weighted_log_ret' if predictive else "weighted_log_ret"
@@ -428,6 +437,9 @@ def lm_analysis(df, order_type='combined', predictive=True, ret_type='log_ret',
 
     if momentum and ret_type == 'weighted_mp':
         X_coefficients += ['weighted_log_ret']
+
+    elif momentum and ret_type == "log_ret_ex":
+        X_coefficients += ['log_ret_ex']
     
     elif momentum and ret_type == 'log_ret':
         X_coefficients += ['log_ret']
