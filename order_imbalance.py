@@ -10,6 +10,7 @@ import statsmodels.formula.api as smf
 import yfinance as yf
 from datetime import timedelta
 import logging
+from prediction_ML_pipeline import save_dataframe_to_folder
 
 
 ## Process:
@@ -150,35 +151,50 @@ def order_imbalance(df_full, df_pred=None, df_ob=None, delta='30S', type='vis'):
         return df
 
     if delta == 'daily':
+        df_full['datetime_bins'] = df_full.index.get_level_values('datetime').normalize()
         df['datetime_bins'] = df.index.get_level_values('datetime').normalize()
 
     else:
+        df_full['datetime_bins'] = df_full.index.get_level_values('datetime').ceil(delta)
         df['datetime_bins'] = df.index.get_level_values('datetime').ceil(delta)
 
 
+    # Create the DataFrame with the datetime bins
+    full_bins = get_datetime_bins(df_full, delta)
+
     if type == 'hid':
         df = pd.merge(df.reset_index(), df_pred.reset_index(), on=['datetime', 'ticker', 'event_number']).set_index(['datetime', 'ticker', 'event_number'])
+
+
     grouped = df.groupby('datetime_bins').apply(
         lambda x: pd.Series({
-            'order_imbalance': calculate_order_imbalance(x, 'direction', 'size', 'pred_dir' if type == 'hid' else None),
-            'first_midprice': x['midprice'].iloc[0],
-            'last_midprice': x['midprice'].iloc[-1],
-            'first_weighted_mp': x['weighted_mp'].iloc[0],
-            'last_weighted_mp': x['weighted_mp'].iloc[-1]
+            'order_imbalance': calculate_order_imbalance(x, 'direction', 'size', 'pred_prob' if type == 'hid' else None),
         })
     ).reset_index()
+    # with pd.option_context('display.max_rows', None, 'display.max_columns', None):
+    #     print(df[df['datetime_bins']=='2018-01-30 09:34:00'])
+
+    # with pd.option_context('display.max_rows', None, 'display.max_columns', None):
+    #     print(grouped)
+
+    # Merge grouped data with full bins to include all bins
+    grouped = pd.merge(full_bins, grouped, on='datetime_bins', how='left').fillna(0)
+
+    # Calculate first and last midprice and weighted_mp based on df_full
+    full_grouped = df_full.groupby('datetime_bins').agg({
+        'midprice': ['first', 'last'],
+        'weighted_mp': ['first', 'last']
+    }).reset_index()
+
+    full_grouped.columns = ['datetime_bins', 'first_midprice', 'last_midprice', 'first_weighted_mp', 'last_weighted_mp']
+
+    # Merge with grouped to include these values
+    grouped = pd.merge(grouped, full_grouped, on='datetime_bins', how='left')
 
     ticker = df_full.index.get_level_values('ticker')[0]
 
     grouped['order_imbalance'] = grouped['order_imbalance'].fillna(0)
     grouped = calculate_log_returns(grouped, delta=delta, ticker=ticker)
-
-
-    ## Filter based on quantiles
-    # grouped = filter_quantiles(grouped, 'log_ret')
-    # grouped = filter_quantiles(grouped, 'fut_log_ret')
-    # grouped = filter_quantiles(grouped, 'weighted_log_ret')
-    # grouped = filter_quantiles(grouped, 'fut_weighted_log_ret')
 
     if delta == "daily":
         return grouped
@@ -192,9 +208,27 @@ def combined_order_imbalance(df_full, df_pred, df_ob, delta='5min'):
     df_hid = order_imbalance(df_full=df_full, df_ob=df_ob, df_pred=df_pred, delta=delta, type='hid')
 
 
-    return df_vis.merge(df_hid[['datetime_bins', 'order_imbalance']], on='datetime_bins', suffixes=('_vis', '_hid'))
+    df_comb = df_vis.merge(df_hid[['datetime_bins', 'order_imbalance']], on='datetime_bins', suffixes=('_vis', '_hid'))
+    return df_comb
 
 
+def get_datetime_bins(df_full, delta):
+    # Extract the first and last date from the datetime column
+    start_date = df_full.index.get_level_values('datetime').min().date()
+    end_date = df_full.index.get_level_values('datetime').max().date()
+
+    # Set the time to start at 09:30 and end at 15:30
+    start_datetime = pd.Timestamp.combine(start_date, pd.Timestamp("09:30").time())
+    start_datetime = start_datetime + pd.Timedelta(delta)
+    end_datetime = pd.Timestamp.combine(end_date, pd.Timestamp("15:30").time())
+
+    # Generate the full range of datetime bins with the specified frequency
+    full_range = pd.date_range(start=start_datetime, end=end_datetime, freq=delta)
+
+    # Create the DataFrame with the datetime bins
+    full_bins = pd.DataFrame(full_range, columns=['datetime_bins']) 
+
+    return full_bins
 
 
 def iceberg_order_imbalance(df_full, df_pred, df_ob, delta='5min', weighted=False):
@@ -203,39 +237,53 @@ def iceberg_order_imbalance(df_full, df_pred, df_ob, delta='5min', weighted=Fals
     ib_delta = '1ms'
     df = iceberg_tag(df_full, ib_delta)
 
+    full_bins = get_datetime_bins(df_full, delta)
+
     if delta == 'daily':
+        df_full['datetime_bins'] = df_full.index.get_level_values('datetime').normalize()
         df['datetime_bins'] = df.index.get_level_values('datetime').normalize()
 
     else:
+        df_full['datetime_bins'] = df_full.index.get_level_values('datetime').ceil(delta)
         df['datetime_bins'] = df.index.get_level_values('datetime').ceil(delta)
+
+
 
     grouped = df.groupby('datetime_bins').apply(
         lambda x: pd.Series({
             'order_imbalance_vis': calculate_order_imbalance(x[x['iceberg'] == 0], 'direction', 'size'),
             'order_imbalance_ib': calculate_order_imbalance(x[x['iceberg'] == 1], 'direction', 'size'),
-            'first_midprice': x['midprice'].iloc[0],
-            'last_midprice': x['midprice'].iloc[-1],
-            'first_weighted_mp': x['weighted_mp'].iloc[0],
-            'last_weighted_mp': x['weighted_mp'].iloc[-1]
         })
     ).reset_index()
 
+    # Merge grouped data with full bins to include all bins
+    grouped = pd.merge(full_bins, grouped, on='datetime_bins', how='left').fillna(0)
+
+    # Calculate first and last midprice and weighted_mp based on df_full
+    full_grouped = df_full.groupby('datetime_bins').agg({
+        'midprice': ['first', 'last'],
+        'weighted_mp': ['first', 'last']
+    }).reset_index()
+
+    full_grouped.columns = ['datetime_bins', 'first_midprice', 'last_midprice', 'first_weighted_mp', 'last_weighted_mp']
+
     grouped['order_imbalance_vis'] = grouped['order_imbalance_vis'].fillna(0)
     grouped['order_imbalance_ib'] = grouped['order_imbalance_ib'].fillna(0)
-    grouped = calculate_log_returns(grouped, delta=delta)
 
+    # Merge with grouped to include these values
+    grouped = pd.merge(grouped, full_grouped, on='datetime_bins', how='left')
 
-    ## Filter based on quantiles
-    # grouped = filter_quantiles(grouped, 'log_ret')
-    # grouped = filter_quantiles(grouped, 'fut_log_ret')
-    # grouped = filter_quantiles(grouped, 'weighted_log_ret')
-    # grouped = filter_quantiles(grouped, 'fut_weighted_log_ret')
-
+    ticker = df_full.index.get_level_values('ticker')[0]
+    grouped = calculate_log_returns(grouped, delta=delta, ticker=ticker)
 
     df_hid = order_imbalance(df_full=df_full, df_pred=df_pred, df_ob=df_ob, delta=delta, type='hid')
     df_hid.rename(columns={"order_imbalance": "order_imbalance_hid"}, inplace=True)
 
-    return grouped.merge(df_hid[['datetime_bins', 'order_imbalance_hid']], on='datetime_bins')
+    grouped = pd.merge(grouped, df_hid[['datetime_bins', 'order_imbalance_hid']], on='datetime_bins', how='left')
+
+    grouped['order_imbalance_hid'] = grouped['order_imbalance_hid'].fillna(0)
+
+    return grouped
 
 
 

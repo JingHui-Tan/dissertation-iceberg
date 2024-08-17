@@ -107,7 +107,7 @@ def process_and_train_xgb(archive_path, model_path, model_name, params,
             extracted_files = archive.read([orderbook_file, message_file])
             orderbook_stream = io.BytesIO(extracted_files[orderbook_file].read())
             message_stream = io.BytesIO(extracted_files[message_file].read())
-            print("Processed files:", orderbook_file, message_file)
+            print("Processed files:", orderbook_file, message_file, flush=True)
 
             orderbook_chunk = pd.read_csv(orderbook_stream, header=None, usecols=[0, 1, 2, 3])
             message_chunk = pd.read_csv(message_stream, header=None, usecols=[0, 1, 2, 3, 4, 5])
@@ -145,7 +145,7 @@ def process_and_train_xgb(archive_path, model_path, model_name, params,
 
     # Compute overall accuracy
     overall_accuracy = accuracy_score(all_labels, all_preds)
-    print(f"Overall Accuracy: {overall_accuracy}")
+    print(f"Overall Accuracy: {overall_accuracy}", flush=True)
 
     # Save the final model to the specified folder
     model_path = os.path.join(model_path, model_name)
@@ -188,7 +188,7 @@ def order_imbalance_calc(archive_path, delta_lst, model=None,
             extracted_files = archive.read([orderbook_file, message_file])
             orderbook_stream = io.BytesIO(extracted_files[orderbook_file].read())
             message_stream = io.BytesIO(extracted_files[message_file].read())
-            print("Processed files:", orderbook_file, message_file)
+            print("Processed files:", orderbook_file, message_file, flush=True)
 
             # Read the entire CSV files
             orderbook_df = pd.read_csv(orderbook_stream, header=None, usecols=[0, 1, 2, 3])
@@ -362,8 +362,8 @@ def calculate_t_values_adj_R2(model, df, X_coefficients, output, chunk_size=100)
     total_sum_of_squares = 0
 
     for chunk in get_data_in_chunks(df, chunk_size):
-        X_chunk = chunk[X_coefficients].values
-        y_chunk = chunk[output].values
+        X_chunk = chunk[X_coefficients].fillna(0).values
+        y_chunk = chunk[output].fillna(0).replace(-np.inf, 0).values
         y_chunk_pred = model.predict(X_chunk)
         residuals = y_chunk - y_chunk_pred
         residual_sum_of_squares += np.dot(residuals, residuals)
@@ -433,7 +433,6 @@ def lm_analysis(df, order_type='combined', predictive=True, ret_type='log_ret',
     }
 
     X_coefficients = coefficients_dict[order_type]
-    num_values = len(X_coefficients)
 
     if momentum and ret_type == 'weighted_mp':
         X_coefficients += ['weighted_log_ret']
@@ -451,9 +450,11 @@ def lm_analysis(df, order_type='combined', predictive=True, ret_type='log_ret',
         X_coefficients += [f'{ret_type}']
 
     for chunk in get_data_in_chunks(df, chunk_size=20):
-        try:
-            X_chunk = chunk[X_coefficients].values
-            y_chunk = chunk[output].values
+        try:            
+            X_chunk = chunk[X_coefficients].fillna(0).values
+            y_chunk = chunk[output].fillna(0).replace(-np.inf, 0).values
+
+
 
             # Check for NaNs
             if np.isnan(X_chunk).any() or np.isnan(y_chunk).any():
@@ -469,10 +470,11 @@ def lm_analysis(df, order_type='combined', predictive=True, ret_type='log_ret',
         logging.info("Model fit completed")
 
         coefficients = sgd_reg.coef_
+        intercept = sgd_reg.intercept_[0]
         t_values, adj_r2 = calculate_t_values_adj_R2(sgd_reg, df, X_coefficients, output, chunk_size=100)
 
         logging.info("Coefficients and t_values obtained")
-        return coefficients[:num_values].tolist(), t_values[:num_values].tolist(), adj_r2
+        return intercept, coefficients.tolist(), t_values.tolist(), adj_r2
     except Exception as e:
         logging.error(f"Error in final model fit: {e}")
         return [], []
@@ -482,15 +484,15 @@ def OI_results(df_dict, order_type='combined', predictive=True, ret_type='log_re
     lm_results = []
 
     col_names_dict = {
-        'vis': ['timeframe', 'params_vis', 'tvals_vis', 'adj_R2'],
-        'hid': ['timeframe', 'params_hid', 'tvals_hid', 'adj_R2'],
-        'combined': ['timeframe', 'params_vis', 'tvals_vis', 'params_hid', 'tvals_hid', 'adj_R2'],
-        'comb_iceberg': ['timeframe', 'params_vis', 'tvals_vis', 'params_hid',
-                         'tvals_hid', 'params_ib', 'tvals_ib', 'adj_R2'],
-        'agg': ['timeframe', 'params_vis', 'tvals_vis',
-                'params_low', 'tvals_low', 'params_mid', 'tvals_mid', 'params_high', 'tvals_high', 'adj_R2'],
-        'size': ['timeframe', 'params_vis', 'tvals_vis',
-                 'params_small', 'tvals_small', 'params_mid', 'tvals_mid', 'params_large', 'tvals_large', 'adj_R2']
+        'vis': ['timeframe', 'intercept', 'adj_R2', 'params_vis', 'tvals_vis'],
+        'hid': ['timeframe', 'intercept', 'adj_R2', 'params_hid', 'tvals_hid'],
+        'combined': ['timeframe', 'intercept', 'adj_R2', 'params_vis', 'tvals_vis', 'params_hid', 'tvals_hid'],
+        'comb_iceberg': ['timeframe', 'intercept', 'adj_R2', 'params_vis', 'tvals_vis', 'params_hid',
+                         'tvals_hid', 'params_ib', 'tvals_ib'],
+        'agg': ['timeframe', 'intercept', 'adj_R2', 'params_vis', 'tvals_vis',
+                'params_low', 'tvals_low', 'params_mid', 'tvals_mid', 'params_high', 'tvals_high'],
+        'size': ['timeframe', 'intercept', 'adj_R2', 'params_vis', 'tvals_vis',
+                 'params_small', 'tvals_small', 'params_mid', 'tvals_mid', 'params_large', 'tvals_large']
 
     }
     logging.info("Process started")
@@ -500,14 +502,16 @@ def OI_results(df_dict, order_type='combined', predictive=True, ret_type='log_re
         logging.info(f'Currently fitting for delta: {delta}')
         row_result = [delta]
         try:
-            coefficients, t_values, adj_r2 = lm_analysis(df_dict[delta], order_type=order_type, 
+            intercept, coefficients, t_values, adj_r2 = lm_analysis(df_dict[delta], order_type=order_type, 
                                                  predictive=predictive, ret_type=ret_type, momentum=momentum)
+
+            row_result += [intercept]
+            row_result += [adj_r2]
 
             for coef, t_val in zip(coefficients, t_values):
                 row_result += [coef]
                 row_result += [t_val]
 
-            row_result += [adj_r2]
             lm_results.append(row_result)
         except Exception as e:
             logging.error(f"Error in lm_analysis for delta {delta}: {e}")
@@ -515,4 +519,10 @@ def OI_results(df_dict, order_type='combined', predictive=True, ret_type='log_re
     
     logging.info("Process completed")
     logging.debug(f"LM Results: {lm_results}")
-    return pd.DataFrame(lm_results, columns=col_names_dict[order_type])
+
+    col_names = col_names_dict[order_type]
+    if momentum:
+        col_names += ['params_momentum', 'tvals_momentum']
+
+
+    return pd.DataFrame(lm_results, columns=col_names)
