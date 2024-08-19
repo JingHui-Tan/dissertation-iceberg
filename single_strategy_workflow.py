@@ -2,7 +2,7 @@ from chunk_pipeline import *
 from prediction_ML_pipeline import save_dataframe_to_folder
 import time
 import os
-from trading_strategy import agg_ind_ticker_strat, combined_strategy_function
+from trading_strategy import combined_strategy_function
 
 
 def main():
@@ -17,7 +17,7 @@ def main():
 
     testing_year = "2019"
     params_year = "2018"
-    order_type = 'comb_iceberg'
+    order_type = 'combined'
     ret_type = "log_ret_ex"
     params_file_name = "all_log_ret_ex_2018_v2.csv"
 
@@ -25,7 +25,7 @@ def main():
     pos_threshold = 0
     neg_threshold = 0
     result_path = "/nfs/home/jingt/dissertation-iceberg/data/output_results/strategy_results"
-    file_name = "all_strat_single_comb_log_ret_ex_update_2min.csv"
+    file_name = "all_strat_single_combined_log_ret_ex_update_2min.csv"
 
     ## ------------------------------------
 
@@ -62,12 +62,13 @@ def main():
     for ticker in ticker_lst:
         start = time.time()
         print(f"Calculating for ticker {ticker}", flush=True)
-        df, result_final = combined_strategy_function(ticker, delta, order_type, ret_type, model_path, 
-                               pos_threshold=0, neg_threshold=0, weighted=False, momentum=False, year=2019, 
-                               use_update_strategy=True, params_df=None)
+        df_final, result_final_unweighted, result_final_weighted = combined_strategy_function(ticker, delta, order_type, ret_type, model_path, 
+                                                pos_threshold=0, neg_threshold=0, weighted=False, momentum=False, year=2019, 
+                                                use_update_strategy=True, params_df=None)
 
-        df['final_PnL'] = result_final
-        df_ticker_lst.append(df)
+        df_final['final_PnL_weighted'] = result_final_weighted
+        df_final['final_PnL_unweighted'] = result_final_unweighted
+        df_ticker_lst.append(df_final)
 
 
 

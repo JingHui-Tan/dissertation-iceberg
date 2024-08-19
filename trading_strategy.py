@@ -6,6 +6,8 @@ import pickle
 from collections import defaultdict
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, r2_score
+from order_imbalance import get_datetime_bins
+from prediction_ML_pipeline import save_dataframe_to_folder
 
 
 
@@ -134,20 +136,6 @@ def process_signals(params_df, ticker_lst, delta, ret_type, model_path, order_ty
 
 
 
-def agg_ind_ticker_strat(params_df, ticker_lst, delta, order_type, ret_type, model_path, 
-                         pos_threshold, neg_threshold, weighted=False, year=2019):
-    df_ticker_lst = []
-    for ticker in ticker_lst:
-        df_ticker, result_final_ticker = signal_single_ticker_strat(params_df, ticker, delta, order_type, ret_type, 
-                                                                    model_path, pos_threshold, neg_threshold, 
-                                                                    weighted=weighted, year=year)
-        df_ticker['final_PnL'] = result_final_ticker
-        df_ticker_lst.append(df_ticker)
-    
-    df_ticker_all = pd.concat(df_ticker_lst)
-
-    return df_ticker_all
-
 
 
 
@@ -221,19 +209,25 @@ def update_strategy_single_daily(ticker, date, delta, order_type, ret_type, mode
     return signal_df
 
 
-
-def combined_strategy_function(ticker, delta, order_type, ret_type, model_path, 
-                               pos_threshold=0, neg_threshold=0, weighted=False, momentum=False, year=2019, 
-                               use_update_strategy=True, params_df=None):
-
-    result_final = 0
-    result_lst = []
-
+def get_trading_days(year):
     nasdaq = mcal.get_calendar('XNYS')  # XNYS is often used for NASDAQ
     # Get the trading schedule for the entire year
     trading_schedule = nasdaq.sessions_in_range(f'{year}-01-01', f'{year}-12-31')
     # Convert to a list of strings
     trading_days_lst = trading_schedule.strftime('%Y-%m-%d').tolist()
+
+    return trading_days_lst
+
+
+
+
+def combined_strategy_function(ticker, delta, order_type, ret_type, model_path, 
+                               pos_threshold=0, neg_threshold=0, weighted=False, momentum=False, year=2019, 
+                               use_update_strategy=True, params_df=None):
+    result_lst_unweighted = []
+    result_lst_weighted = []
+
+    trading_days_lst = get_trading_days(year)
 
     for date in trading_days_lst[6:] if use_update_strategy else trading_days_lst:
         if use_update_strategy:
@@ -241,18 +235,120 @@ def combined_strategy_function(ticker, delta, order_type, ret_type, model_path,
         else:
             signal_day = OI_signals_daily_ticker(params_df, ticker, date, delta, order_type, ret_type, model_path)
 
-        if not weighted:
-            positive_sum = signal_day[signal_day['signal'] > pos_threshold]['fut_log_ret_ex'].sum()
-            negative_sum = signal_day[signal_day['signal'] < neg_threshold]['fut_log_ret_ex'].sum()
-        else:
-            positive_sum = (signal_day[signal_day['signal'] > 0]['fut_log_ret_ex'] * signal_day[signal_day['signal'] > 0]['signal'].abs()).sum()
-            negative_sum = (signal_day[signal_day['signal'] < 0]['fut_log_ret_ex'] * signal_day[signal_day['signal'] < 0]['signal'].abs()).sum()
+        # Unweighted calculations
+        positive_sum_unweighted = signal_day[signal_day['signal'] > pos_threshold]['fut_log_ret_ex'].sum()
+        negative_sum_unweighted = signal_day[signal_day['signal'] < neg_threshold]['fut_log_ret_ex'].sum()
+        result_unweighted = positive_sum_unweighted - negative_sum_unweighted
+        result_lst_unweighted.append(result_unweighted)
 
-        result = positive_sum - negative_sum
-        result_final += result
-        result_lst.append(result)
+        # Weighted calculations
+        positive_sum_weighted = (signal_day[signal_day['signal'] > 0]['fut_log_ret_ex'] * signal_day[signal_day['signal'] > 0]['signal'].abs()).sum()
+        negative_sum_weighted = (signal_day[signal_day['signal'] < 0]['fut_log_ret_ex'] * signal_day[signal_day['signal'] < 0]['signal'].abs()).sum()
+        result_weighted = positive_sum_weighted - negative_sum_weighted
+        result_lst_weighted.append(result_weighted)
 
-    df = pd.DataFrame([result_lst], columns=trading_days_lst[6:] if use_update_strategy else trading_days_lst)
-    df.insert(0, "Ticker", ticker)
+    # Create DataFrames for unweighted and weighted results
+    df_unweighted = pd.DataFrame([result_lst_unweighted], columns=trading_days_lst[6:] if use_update_strategy else trading_days_lst)
+    df_unweighted.insert(0, "Ticker", ticker)
+    df_unweighted.insert(1, "Type", "Unweighted")
+
+    df_weighted = pd.DataFrame([result_lst_weighted], columns=trading_days_lst[6:] if use_update_strategy else trading_days_lst)
+    df_weighted.insert(0, "Ticker", ticker)
+    df_weighted.insert(1, "Type", "Weighted")
+
+    # Concatenate the unweighted and weighted DataFrames
+    df_final = pd.concat([df_unweighted, df_weighted], ignore_index=True)
+
+    # Compute the final result for both weighted and unweighted
+    result_final_unweighted = sum(result_lst_unweighted)
+    result_final_weighted = sum(result_lst_weighted)
+
+    # Return the final DataFrame and the final result for both types
+    return df_final, result_final_unweighted, result_final_weighted
+
+
+
+def portfolio_update_signals(ticker_lst, delta, order_type, ret_type, model_path, 
+                             save_file_path, result_file_name, count_file_name,
+                             percentile=0.2, momentum=False, year=2019):
+
+    trading_days_lst = get_trading_days(year)
+    top_percentile = int(percentile * len(ticker_lst))
+
+    result_all_lst = []
+    number_runs_lst = []
+    df_counts_all_lst = []
+
+
+    for date in trading_days_lst[6:]:
+        signal_day = []
+
+        start_date = date
+        end_date = date
+
+        # Set the time to start at 09:30 and end at 15:30
+        start_datetime = pd.Timestamp.combine(pd.to_datetime(start_date), pd.Timestamp("09:30").time())
+        start_datetime = start_datetime + pd.Timedelta(delta)
+        end_datetime = pd.Timestamp.combine(pd.to_datetime(end_date), pd.Timestamp("15:30").time())
+
+        # Generate the full range of datetime bins with the specified frequency
+        full_range = pd.date_range(start=start_datetime, end=end_datetime, freq=delta)
+
+        # Create the DataFrame with the datetime bins
+        full_bins = pd.DataFrame(full_range, columns=['datetime_bins']) 
+
+        for ticker in ticker_lst:
+            signal_df_ticker_daily = update_strategy_single_daily(ticker, date, delta, order_type, 
+                                                                  ret_type, model_path, momentum=momentum)
+            signal_df_ticker_daily['ticker'] = ticker
+            signal_df_ticker_daily['datetime_bins'] = full_bins['datetime_bins']            
+            signal_day.append(signal_df_ticker_daily)
+
+        df_signal_day = pd.concat(signal_day).reset_index(drop=True)
+        df_signal_day['signal_rank'] = df_signal_day.groupby('datetime_bins')['signal'].rank(method='first', ascending=False)
+        
+        top_signals = df_signal_day[df_signal_day['signal_rank'] <= top_percentile]
+        top_signals = top_signals[top_signals['signal'] > 0]
+        bottom_signals = df_signal_day[df_signal_day['signal_rank'] >= len(ticker_lst) - top_percentile]
+        bottom_signals = bottom_signals[bottom_signals['signal'] < 0]
+
+
+
+            # Group by 'ticker' and count the occurrences for top signals
+        top_counts = top_signals.groupby('ticker').count()[['signal']]
+        top_counts.rename(columns={'signal': 'top_counts'}, inplace=True)
+
+        # Group by 'ticker' and count the occurrences for bottom signals
+        bottom_counts = bottom_signals.groupby('ticker').count()[['signal']]
+        bottom_counts.rename(columns={'signal': 'bottom_counts'}, inplace=True)
+
+        df_counts = pd.merge(top_counts, bottom_counts, left_index=True, right_index=True)
+        df_counts['date'] = date
     
-    return df, result_final
+        top_sum  = top_signals['fut_log_ret_ex'].sum()
+        bottom_sum = bottom_signals['fut_log_ret_ex'].sum()
+
+        result = top_sum - bottom_sum
+        number_runs = len(signal_day)
+
+        print(f"PnL for {date}: {result}", flush=True)
+        print(f"number of runs for {date}: {number_runs}", flush=True)
+        with pd.option_context('display.max_rows', 100, 'display.max_columns', 10):
+            print(df_counts, flush=True)
+
+        result_df = pd.DataFrame({'date': [date], 'PnL': [result], 'no. runs': [number_runs]})
+
+        result_all_lst.append(result_df)
+        df_counts_all_lst.append(df_counts)
+
+        df_result_all = pd.concat(result_all_lst)
+        df_counts_all = pd.concat(df_counts_all_lst)
+
+        save_dataframe_to_folder(df_result_all, save_file_path, result_file_name)
+        save_dataframe_to_folder(df_counts_all, save_file_path, count_file_name)
+
+
+        with pd.option_context('display.max_rows', None, 'display.max_columns', 100):
+            print(df_result_all, flush=True)
+    
+    return df_result_all, df_counts_all
