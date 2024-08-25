@@ -161,7 +161,7 @@ def process_and_train_xgb(archive_path, model_path, model_name, params,
 
 def order_imbalance_calc(archive_path, delta_lst, model=None,
                          model_path=None, model_name=None, order_type='combined',
-                         specific_date=None):
+                         specific_date=None, ticker=None):
     """
     Extract 7z file, process CSVs, predict using the trained model and create OI dataframes dict.
     """
@@ -173,6 +173,9 @@ def order_imbalance_calc(archive_path, delta_lst, model=None,
 
     df_dict = {key: [] for key in delta_lst}
     
+    if specific_date:
+        year = specific_date[:4]
+        archive_path = f"/nfs/data/lobster_data/lobster_raw/2017-19/_data_dwn_32_302__{ticker}_{year}-01-01_{year}-12-31_10.7z"
 
     with py7zr.SevenZipFile(archive_path, mode='r') as archive:
         filenames = archive.getnames()
@@ -217,7 +220,6 @@ def order_imbalance_calc(archive_path, delta_lst, model=None,
             # Tag direction of hidden liquidity execution outside of bid-ask spread
             y_pred_df = hid_outside_spread_tag(X, y_pred_df)
 
-
             for delta in delta_lst:
                 if order_type == 'vis' or order_type == 'hid' or order_type == 'combined':
                     df_merged = combined_order_imbalance(message_df, y_pred_df, orderbook_df, delta=delta)
@@ -227,9 +229,7 @@ def order_imbalance_calc(archive_path, delta_lst, model=None,
 
                 elif order_type == 'agg' or order_type == 'size':
                     df_merged = conditional_order_imbalance(message_df, y_pred_df, orderbook_df, delta=delta, condition=order_type)
-
                 df_dict[delta].append(df_merged)
-
     # Concatenate the DataFrames for each key
     for key in df_dict:
         df_dict[key] = pd.concat(df_dict[key])
@@ -362,7 +362,7 @@ def calculate_t_values_adj_R2(model, df, X_coefficients, output, chunk_size=100)
     total_sum_of_squares = 0
 
     for chunk in get_data_in_chunks(df, chunk_size):
-        X_chunk = chunk[X_coefficients].fillna(0).values
+        X_chunk = chunk[X_coefficients].fillna(0).replace(-np.inf, 0).replace(np.inf, 0).values
         y_chunk = chunk[output].fillna(0).replace(-np.inf, 0).values
         y_chunk_pred = model.predict(X_chunk)
         residuals = y_chunk - y_chunk_pred
@@ -449,10 +449,10 @@ def lm_analysis(df, order_type='combined', predictive=True, ret_type='log_ret',
     elif momentum and (ret_type == 'daily_ret' or ret_type == 'daily_ret_ex'):
         X_coefficients += [f'{ret_type}']
 
-    for chunk in get_data_in_chunks(df, chunk_size=20):
+    for chunk in get_data_in_chunks(df, chunk_size=40):
         try:            
-            X_chunk = chunk[X_coefficients].fillna(0).values
-            y_chunk = chunk[output].fillna(0).replace(-np.inf, 0).values
+            X_chunk = chunk[X_coefficients].fillna(0).replace(-np.inf, 0).replace(np.inf, 0).values
+            y_chunk = chunk[output].fillna(0).replace(-np.inf, 0).replace(np.inf, 0).values
 
 
 

@@ -11,6 +11,8 @@ import yfinance as yf
 from datetime import timedelta
 import logging
 from prediction_ML_pipeline import save_dataframe_to_folder
+import os
+import gzip
 
 
 ## Process:
@@ -46,71 +48,74 @@ def iceberg_tag(df, ib_delta):
 
 
 def calculate_log_returns(grouped, delta, ticker=None):
-    grouped['log_ret'] = np.log(grouped['last_midprice']) - np.log(grouped['first_midprice'])
-    grouped['fut_log_ret'] = grouped['log_ret'].shift(-1)
-    grouped['weighted_log_ret'] = np.log(grouped['last_weighted_mp']) - np.log(grouped['first_weighted_mp'])
-    grouped['fut_weighted_log_ret'] = grouped['weighted_log_ret'].shift(-1)
-
     # Define ticker and date
     current_date = grouped['datetime_bins'][0].date()
+    if delta != 'daily':
+        grouped['log_ret'] = np.log(grouped['last_midprice']) - np.log(grouped['first_midprice'])
+        grouped['fut_log_ret'] = grouped['log_ret'].shift(-1)
+        grouped['weighted_log_ret'] = np.log(grouped['last_weighted_mp']) - np.log(grouped['first_weighted_mp'])
+        grouped['fut_weighted_log_ret'] = grouped['weighted_log_ret'].shift(-1)
 
-    # Get market excess returns
-    SPY_data_loc = f"/nfs/home/jingt/dissertation-iceberg/data/SPY_data/SPY_{current_date}.csv"
-    SPY_data = pd.read_csv(SPY_data_loc)
+        # Get market excess returns
+        SPY_data_loc = f"/nfs/home/jingt/dissertation-iceberg/data/SPY_data/SPY_{current_date}.csv"
+        SPY_data = pd.read_csv(SPY_data_loc)
 
-    SPY_data['datetime_bins'] = pd.to_datetime(SPY_data['datetime_bins'])
-    SPY_data.rename(columns={"datetime_bins": "datetime_bins_prev"}, inplace=True)
-    SPY_data.set_index("datetime_bins_prev", inplace=True)
+        SPY_data['datetime_bins'] = pd.to_datetime(SPY_data['datetime_bins'])
+        SPY_data.rename(columns={"datetime_bins": "datetime_bins_prev"}, inplace=True)
+        SPY_data.set_index("datetime_bins_prev", inplace=True)
 
-    SPY_data['datetime_bins'] = SPY_data.index.ceil(delta)
+        SPY_data['datetime_bins'] = SPY_data.index.ceil(delta)
 
-    # Group by the datetime_bins and calculate the log returns
-    SPY_returns = SPY_data.groupby("datetime_bins").apply(
-        lambda x: pd.Series({
-            'log_ret': np.log(x['last_midprice'].iloc[-1]) - np.log(x['first_midprice'].iloc[0])
-        })
-    ).reset_index()
+        # Group by the datetime_bins and calculate the log returns
+        SPY_returns = SPY_data.groupby("datetime_bins").apply(
+            lambda x: pd.Series({
+                'log_ret': np.log(x['last_midprice'].iloc[-1]) - np.log(x['first_midprice'].iloc[0])
+            })
+        ).reset_index()
 
-    grouped['log_ret_ex'] = grouped['log_ret'] - SPY_returns['log_ret']
-    grouped['fut_log_ret_ex'] = grouped['log_ret_ex'].shift(-1)
+        grouped['log_ret_ex'] = grouped['log_ret'] - SPY_returns['log_ret']
+        grouped['fut_log_ret_ex'] = grouped['log_ret_ex'].shift(-1)
 
-    # Get the data for the ticker
-    hist = yf.Ticker(ticker).history(start=current_date, end=current_date + timedelta(days=7))
-    day_open = hist.loc[hist.index.date == current_date, 'Open'].iloc[0]
-    day_close = hist.loc[hist.index.date == current_date, 'Close'].iloc[0]
+    # # Get the data for the ticker
+    # hist = yf.Ticker(ticker).history(start=current_date, end=current_date + timedelta(days=7))
+    # day_open = hist.loc[hist.index.date == current_date, 'Open'].iloc[0]
+    # day_close = hist.loc[hist.index.date == current_date, 'Close'].iloc[0]
 
-    next_trading_day_data = hist[hist.index.date > current_date].head(1)
-    next_day_open = next_trading_day_data['Open'].iloc[0]
-    next_day_close = next_trading_day_data['Close'].iloc[0]
+    # next_trading_day_data = hist[hist.index.date > current_date].head(1)
+    # next_day_open = next_trading_day_data['Open'].iloc[0]
+    # next_day_close = next_trading_day_data['Close'].iloc[0]
 
+    # grouped['ret_tClose'] = np.log(day_close) - np.log(grouped['first_midprice'])
+    # grouped['fret_tClose'] = grouped['ret_tClose'].shift(-1)
+    # grouped['daily_ret'] = np.log(day_close) - np.log(day_open)
+    # grouped['fut_daily_ret'] = np.log(next_day_close) - np.log(next_day_open)
 
-    # Get data for SPY
-    hist_SPY = yf.Ticker('SPY').history(start=current_date, end=current_date + timedelta(days=7))
-    day_open_SPY = hist_SPY.loc[hist_SPY.index.date == current_date, 'Open'].iloc[0]
-    day_close_SPY = hist_SPY.loc[hist_SPY.index.date == current_date, 'Close'].iloc[0]
+    if delta == 'daily':
+        date_str = current_date.strftime('%Y-%m-%d')
+        fret_folder = '/nfs/home/jingt/dissertation-iceberg/data/fret_folder'
+        file_name = f'{date_str}.csv.gz'
+        file_path = os.path.join(fret_folder, file_name)
 
-    next_trading_day_data_SPY = hist_SPY[hist_SPY.index.date > current_date].head(1)
-    next_day_open_SPY = next_trading_day_data_SPY['Open'].iloc[0]
-    next_day_close_SPY = next_trading_day_data_SPY['Close'].iloc[0]
+        if os.path.exists(file_path):
+            # Open and read the CSV file inside the .gz
+            with gzip.open(file_path, 'rt') as f:
+                df = pd.read_csv(f)
+            print(f"File for {date_str} opened successfully.")
+        else:
+            print(f"No file found for date {date_str} at {file_path}.")
 
+        grouped['fret_ClOp'] = df[df['Ticker'] == ticker]['fret_CLOP_MR'].iloc[0]
+        grouped['fret_ClCl'] = df[df['Ticker'] == ticker]['fret_CLCL_MR'].iloc[0]
 
-    grouped['ret_tClose'] = np.log(day_close) - np.log(grouped['first_midprice'])
-    grouped['fret_tClose'] = grouped['ret_tClose'].shift(-1)
-    grouped['daily_ret'] = np.log(day_close) - np.log(day_open)
-    grouped['fut_daily_ret'] = np.log(next_day_close) - np.log(next_day_open)
+    # grouped['daily_ret_ex'] = ((np.log(day_close) - np.log(day_open)) 
+    #                            - (np.log(day_close_SPY) - np.log(day_open_SPY)))
+    # grouped['fut_daily_ret_ex'] = ((np.log(next_day_close) - np.log(next_day_open)) 
+    #                            - (np.log(next_day_close_SPY) - np.log(next_day_open_SPY)))
 
-    grouped['fret_ClOp'] = np.log(next_day_open) - np.log(day_close)
-    grouped['fret_ClCl'] = np.log(next_day_close) - np.log(day_close)
-
-    grouped['daily_ret_ex'] = ((np.log(day_close) - np.log(day_open)) 
-                               - (np.log(day_close_SPY) - np.log(day_open_SPY)))
-    grouped['fut_daily_ret_ex'] = ((np.log(next_day_close) - np.log(next_day_open)) 
-                               - (np.log(next_day_close_SPY) - np.log(next_day_open_SPY)))
-
-    grouped['fret_ClOp_ex'] = ((np.log(next_day_open) - np.log(day_close)) 
-                               - (np.log(next_day_open_SPY) - np.log(day_close_SPY)))
-    grouped['fret_ClCl_ex'] = ((np.log(next_day_close) - np.log(day_close)) 
-                               - (np.log(next_day_close_SPY) - np.log(day_close_SPY)))
+    # grouped['fret_ClOp_ex'] = ((np.log(next_day_open) - np.log(day_close)) 
+    #                            - (np.log(next_day_open_SPY) - np.log(day_close_SPY)))
+    # grouped['fret_ClCl_ex'] = ((np.log(next_day_close) - np.log(day_close)) 
+    #                            - (np.log(next_day_close_SPY) - np.log(day_close_SPY)))
 
 
     return grouped
@@ -213,21 +218,25 @@ def combined_order_imbalance(df_full, df_pred, df_ob, delta='5min'):
 
 
 def get_datetime_bins(df_full, delta):
-    # Extract the first and last date from the datetime column
-    start_date = df_full.index.get_level_values('datetime').min().date()
-    end_date = df_full.index.get_level_values('datetime').max().date()
+    if delta != 'daily':
+        # Extract the first and last date from the datetime column
+        start_date = df_full.index.get_level_values('datetime').min().date()
+        end_date = df_full.index.get_level_values('datetime').max().date()
 
-    # Set the time to start at 09:30 and end at 15:30
-    start_datetime = pd.Timestamp.combine(start_date, pd.Timestamp("09:30").time())
-    start_datetime = start_datetime + pd.Timedelta(delta)
-    end_datetime = pd.Timestamp.combine(end_date, pd.Timestamp("15:30").time())
+        # Set the time to start at 09:30 and end at 15:30
+        start_datetime = pd.Timestamp.combine(start_date, pd.Timestamp("09:30").time())
+        start_datetime = start_datetime + pd.Timedelta(delta)
+        end_datetime = pd.Timestamp.combine(end_date, pd.Timestamp("15:30").time())
 
-    # Generate the full range of datetime bins with the specified frequency
-    full_range = pd.date_range(start=start_datetime, end=end_datetime, freq=delta)
+        # Generate the full range of datetime bins with the specified frequency
+        full_range = pd.date_range(start=start_datetime, end=end_datetime, freq=delta)
 
-    # Create the DataFrame with the datetime bins
-    full_bins = pd.DataFrame(full_range, columns=['datetime_bins']) 
+        # Create the DataFrame with the datetime bins
+        full_bins = pd.DataFrame(full_range, columns=['datetime_bins']) 
 
+    else:
+        full_range = df_full.index.get_level_values('datetime').normalize()[0]
+        full_bins = pd.DataFrame([full_range], columns=['datetime_bins'])
     return full_bins
 
 
