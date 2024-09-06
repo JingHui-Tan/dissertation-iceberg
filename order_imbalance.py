@@ -13,6 +13,7 @@ import logging
 from prediction_ML_pipeline import save_dataframe_to_folder
 import os
 import gzip
+import time
 
 
 ## Process:
@@ -46,6 +47,38 @@ def iceberg_tag(df, ib_delta):
     return event_type_4
 
 
+def fetch_ticker_data_with_retry(ticker, date, retries=10, delay=5, include_prev=False):
+    if not include_prev:
+        for i in range(retries):
+            try:
+                data = yf.download(ticker, start=date, end=date + timedelta(days=7))
+                if data.empty:
+                    raise ValueError(f"No data found for {ticker}")
+                return data
+            except Exception as e:
+                print(f"Attempt {i+1} failed: {e}")
+                if i < retries - 1:
+                    time.sleep(delay)
+                else:
+                    print(f"Failed to retrieve data for {ticker} after {retries} attempts.")
+                    return None
+    
+    else:
+        for i in range(retries):
+            try:
+                data = yf.download([ticker, 'SPY'], start=date - timedelta(days=7), end=date + timedelta(days=7))
+                if data.empty:
+                    raise ValueError(f"No data found for {ticker}")
+                return data
+            except Exception as e:
+                print(f"Attempt {i+1} failed: {e}")
+                if i < retries - 1:
+                    time.sleep(delay)
+                else:
+                    print(f"Failed to retrieve data for {ticker} after {retries} attempts.")
+                    return None
+        
+
 
 def calculate_log_returns(grouped, delta, ticker=None):
     # Define ticker and date
@@ -75,53 +108,126 @@ def calculate_log_returns(grouped, delta, ticker=None):
 
         grouped['log_ret_ex'] = grouped['log_ret'] - SPY_returns['log_ret']
         grouped['fut_log_ret_ex'] = grouped['log_ret_ex'].shift(-1)
+        grouped['date'] = pd.to_datetime(current_date)
 
-    # # Get the data for the ticker
-    # hist = yf.Ticker(ticker).history(start=current_date, end=current_date + timedelta(days=7))
-    # day_open = hist.loc[hist.index.date == current_date, 'Open'].iloc[0]
-    # day_close = hist.loc[hist.index.date == current_date, 'Close'].iloc[0]
+        ff_df = pd.read_csv("/nfs/home/jingt/dissertation-iceberg/fama_french/F-F_Research_Data_5_Factors_2x3_daily.CSV",
+        skiprows=[0, 1, 2])
+        ff_df = ff_df.iloc[:-1, :]
 
-    # next_trading_day_data = hist[hist.index.date > current_date].head(1)
-    # next_day_open = next_trading_day_data['Open'].iloc[0]
-    # next_day_close = next_trading_day_data['Close'].iloc[0]
+        ff_df['Unnamed: 0'] = pd.to_datetime(ff_df['Unnamed: 0'], format='%Y%m%d')
 
-    # grouped['ret_tClose'] = np.log(day_close) - np.log(grouped['first_midprice'])
-    # grouped['fret_tClose'] = grouped['ret_tClose'].shift(-1)
-    # grouped['daily_ret'] = np.log(day_close) - np.log(day_open)
-    # grouped['fut_daily_ret'] = np.log(next_day_close) - np.log(next_day_open)
+        # Set this column as the index
+        ff_df.set_index('Unnamed: 0', inplace=True)
+        ff_df.index.name = 'datetime'
+        # Filter the dataframe to keep only the dates beyond 2017
+        ff_df = ff_df[ff_df.index >= '2018-01-01']
 
+
+        grouped = pd.merge(grouped, ff_df[['SMB', 'HML', 'RF', 'CMA', 'RMW']], left_on="date", right_index=True, how='left')
+        grouped.drop(columns=['date'], inplace=True)
+
+
+
+    ### This commented version uses files with fret calculations_______________________
+    # if delta == 'daily':
+    #     ff_df = pd.read_csv("/nfs/home/jingt/dissertation-iceberg/fama_french/F-F_Research_Data_Factors_daily.CSV",
+    #                 skiprows=5)
+    #     ff_df = ff_df.iloc[:-1, :]
+
+    #     ff_df['Unnamed: 0'] = pd.to_datetime(ff_df['Unnamed: 0'], format='%Y%m%d')
+
+    #     # Set this column as the index
+    #     ff_df.set_index('Unnamed: 0', inplace=True)
+    #     ff_df.index.name = 'datetime'
+    #     # Filter the dataframe to keep only the dates beyond 2017
+    #     ff_df = ff_df[ff_df.index >= '2018-01-01']
+
+    #     date_str = current_date.strftime('%Y-%m-%d')
+    #     fret_folder = '/nfs/home/jingt/dissertation-iceberg/data/fret_folder'
+    #     file_name = f'{date_str}.csv.gz'
+    #     file_path = os.path.join(fret_folder, file_name)
+
+    #     if os.path.exists(file_path):
+    #         # Open and read the CSV file inside the .gz
+    #         with gzip.open(file_path, 'rt') as f:
+    #             df = pd.read_csv(f)
+    #         print(f"File for {date_str} opened successfully.")
+
+    #         if not df[df['Ticker'] == ticker]['fret_CLOP_MR'].empty and not df[df['Ticker'] == ticker]['fret_CLCL_MR'].empty:
+    #             grouped['fret_ClOp'] = df[df['Ticker'] == ticker]['fret_CLOP_MR'].iloc[0]
+    #             grouped['fret_ClOp'] -= (df[df['Ticker'] == 'SPY']['fret_CLOP_MR'].iloc[0])
+    #             grouped['fret_ClCl'] = df[df['Ticker'] == ticker]['fret_CLCL_MR'].iloc[0]
+    #             grouped['fret_ClCl'] -= (df[df['Ticker'] == 'SPY']['fret_CLCL_MR'].iloc[0])
+
+    #         else:
+    #             data = fetch_ticker_data_with_retry(ticker, current_date, retries=10, delay=5)
+    #             dataSPY = fetch_ticker_data_with_retry('SPY', current_date, retries=10, delay=5)
+
+    #             grouped['fret_ClOp'] = np.log(data['Open'].iloc[1]/ data['Close'].iloc[0])
+    #             grouped['fret_ClOp'] -= (np.log(dataSPY['Open'].iloc[1] / dataSPY['Close'].iloc[0]))
+
+    #             grouped['fret_ClCl'] = np.log(data['Close'].iloc[1] / data['Close'].iloc[0])
+    #             grouped['fret_ClCl'] -= (np.log(dataSPY['Close'].iloc[1] / dataSPY['Close'].iloc[0])) 
+
+
+
+    #     else:
+    #         print(f"No file found for date {date_str} at {file_path}.")
+    #         data = fetch_ticker_data_with_retry(ticker, current_date, retries=10, delay=5)
+    #         dataSPY = fetch_ticker_data_with_retry('SPY', current_date, retries=10, delay=5)
+
+    #         grouped['fret_ClOp'] = np.log(data['Open'].iloc[1] / data['Close'].iloc[0])
+    #         grouped['fret_ClOp'] -= (np.log(dataSPY['Open'].iloc[1] / dataSPY['Close'].iloc[0]))
+            
+    #         grouped['fret_ClCl'] = np.log(data['Close'].iloc[1] / data['Close'].iloc[0])
+    #         grouped['fret_ClCl'] -= (np.log(dataSPY['Close'].iloc[1] / dataSPY['Close'].iloc[0]))
+
+    #_______________________
+
+    # Version below directly uses yfinance
     if delta == 'daily':
-        date_str = current_date.strftime('%Y-%m-%d')
-        fret_folder = '/nfs/home/jingt/dissertation-iceberg/data/fret_folder'
-        file_name = f'{date_str}.csv.gz'
-        file_path = os.path.join(fret_folder, file_name)
 
-        if os.path.exists(file_path):
-            # Open and read the CSV file inside the .gz
-            with gzip.open(file_path, 'rt') as f:
-                df = pd.read_csv(f)
-            print(f"File for {date_str} opened successfully.")
-        else:
-            print(f"No file found for date {date_str} at {file_path}.")
+        # Load Fama-French factors
+        ff_df = pd.read_csv("/nfs/home/jingt/dissertation-iceberg/fama_french/F-F_Research_Data_5_Factors_2x3_daily.CSV",
+        skiprows=[0, 1, 2])
+        ff_df = ff_df.iloc[:-1, :]
 
-        grouped['fret_ClOp'] = df[df['Ticker'] == ticker]['fret_CLOP_MR'].iloc[0]
-        grouped['fret_ClCl'] = df[df['Ticker'] == ticker]['fret_CLCL_MR'].iloc[0]
+        ff_df['Unnamed: 0'] = pd.to_datetime(ff_df['Unnamed: 0'], format='%Y%m%d')
 
-    # grouped['daily_ret_ex'] = ((np.log(day_close) - np.log(day_open)) 
-    #                            - (np.log(day_close_SPY) - np.log(day_open_SPY)))
-    # grouped['fut_daily_ret_ex'] = ((np.log(next_day_close) - np.log(next_day_open)) 
-    #                            - (np.log(next_day_close_SPY) - np.log(next_day_open_SPY)))
+        ff_df.set_index('Unnamed: 0', inplace=True)
+        ff_df.index.name = 'datetime'
+        ff_df = ff_df[ff_df.index >= '2018-01-01']
 
-    # grouped['fret_ClOp_ex'] = ((np.log(next_day_open) - np.log(day_close)) 
-    #                            - (np.log(next_day_open_SPY) - np.log(day_close_SPY)))
-    # grouped['fret_ClCl_ex'] = ((np.log(next_day_close) - np.log(day_close)) 
-    #                            - (np.log(next_day_close_SPY) - np.log(day_close_SPY)))
+        # Get data for ticker and SPY around current trading day
+        data = fetch_ticker_data_with_retry(ticker, current_date, retries=10, delay=5, include_prev=True)
+
+        if data.index.tz is not None:
+            current_date = pd.to_datetime(current_date).tz_localize(data.index.tz)
+
+        next_date = data.index[data.index > current_date][0]
+        prev_date = data.index[data.index < current_date][-1]
+
+        # Calculate returns
+        grouped['fret_ClOp'] = np.log(data['Open'].loc[next_date, ticker] / data['Close'].loc[current_date, ticker])
+        grouped['fret_ClOp'] -= np.log(data['Open'].loc[next_date, 'SPY'] / data['Close'].loc[current_date, 'SPY'])
+
+        grouped['ClOp'] = np.log(data['Open'].loc[current_date, ticker] / data['Close'].loc[prev_date, ticker])
+        grouped['ClOp'] -= np.log(data['Open'].loc[current_date, 'SPY'] / data['Close'].loc[prev_date, 'SPY'])
+
+        grouped = pd.merge(grouped, ff_df[['SMB', 'HML', 'RF', 'CMA', 'RMW']], left_on='datetime_bins', right_index=True, how='left')
+        
+            
+        grouped['fret_adjClOp'] = np.log(data['Open'].loc[next_date, ticker] / data['Adj Close'].loc[current_date, ticker])
+        grouped['fret_adjClOp'] -= np.log(data['Open'].loc[next_date, 'SPY'] / data['Adj Close'].loc[current_date, 'SPY'])
+
+        pd.set_option("display.max_columns", None)
 
 
     return grouped
 
 
 def filter_quantiles(grouped, column, lower_quantile=0.025, upper_quantile=0.975):
+    # Filter quantiles for log returns
     lower_bound = grouped[column].quantile(lower_quantile)
     upper_bound = grouped[column].quantile(upper_quantile)
     return grouped[(grouped[column] >= lower_bound) & (grouped[column] <= upper_bound)]
@@ -130,6 +236,7 @@ def filter_quantiles(grouped, column, lower_quantile=0.025, upper_quantile=0.975
 
 
 def calculate_order_imbalance(df, direction_column, size_column, pred_dir_column=None):
+    # Calculate weighted or original order imbalance 
     if pred_dir_column:
         return (df[size_column] * (1 - 2 * df[pred_dir_column])).sum() / df[size_column].sum()
     else:
@@ -142,6 +249,7 @@ def calculate_order_imbalance(df, direction_column, size_column, pred_dir_column
 
 
 def order_imbalance(df_full, df_pred=None, df_ob=None, delta='30S', type='vis'):
+    # Calculate order imbalance for vis, hid or all orders
     weight = df_ob['bid_size_1'] / (df_ob['bid_size_1'] + df_ob['ask_size_1'])
     df_full['weighted_mp'] = weight * df_ob['ask_price_1'] + (1 - weight) * df_ob['bid_price_1']
 
@@ -149,6 +257,8 @@ def order_imbalance(df_full, df_pred=None, df_ob=None, delta='30S', type='vis'):
         df = df_full[df_full['event_type'] == 4]
     elif type == 'hid':
         df = df_full[df_full['event_type'] == 5]
+    elif type == 'all':
+        df = df_full[df_full['event_type'].isin([4, 5])]
     else:
         print("Not Implemented")
         return
@@ -170,19 +280,20 @@ def order_imbalance(df_full, df_pred=None, df_ob=None, delta='30S', type='vis'):
     if type == 'hid':
         df = pd.merge(df.reset_index(), df_pred.reset_index(), on=['datetime', 'ticker', 'event_number']).set_index(['datetime', 'ticker', 'event_number'])
 
+    if type == 'all':
+        df = pd.merge(df.reset_index(), df_pred.reset_index(), on=['datetime', 'ticker', 'event_number']).set_index(['datetime', 'ticker', 'event_number'], how='left')
+        # If all, configure pred prob column accordingly for weighted OI
+        df.loc[(df['event_type'] == 4) & (df['direction'] == 1), 'pred_prob'] = 1
+        df.loc[(df['event_type'] == 4) & (df['direction'] == -1), 'pred_prob'] = 0
 
+    # Calculate order imbalance for dataframe
     grouped = df.groupby('datetime_bins').apply(
         lambda x: pd.Series({
-            'order_imbalance': calculate_order_imbalance(x, 'direction', 'size', 'pred_prob' if type == 'hid' else None),
+            'order_imbalance': calculate_order_imbalance(x, 'direction', 'size', 'pred_prob' if (type == 'hid' or type == 'all') else None),
         })
     ).reset_index()
-    # with pd.option_context('display.max_rows', None, 'display.max_columns', None):
-    #     print(df[df['datetime_bins']=='2018-01-30 09:34:00'])
 
-    # with pd.option_context('display.max_rows', None, 'display.max_columns', None):
-    #     print(grouped)
-
-    # Merge grouped data with full bins to include all bins
+    # Merge grouped data with full bins to include all datetime bins
     grouped = pd.merge(full_bins, grouped, on='datetime_bins', how='left').fillna(0)
 
     # Calculate first and last midprice and weighted_mp based on df_full
@@ -199,6 +310,8 @@ def order_imbalance(df_full, df_pred=None, df_ob=None, delta='30S', type='vis'):
     ticker = df_full.index.get_level_values('ticker')[0]
 
     grouped['order_imbalance'] = grouped['order_imbalance'].fillna(0)
+
+    # Include all other forms of returns
     grouped = calculate_log_returns(grouped, delta=delta, ticker=ticker)
 
     if delta == "daily":
@@ -209,6 +322,7 @@ def order_imbalance(df_full, df_pred=None, df_ob=None, delta='30S', type='vis'):
 
 
 def combined_order_imbalance(df_full, df_pred, df_ob, delta='5min'):
+    # Combine lit and hidden COI for combined signals
     df_vis = order_imbalance(df_full=df_full, df_ob=df_ob, delta=delta, type='vis')
     df_hid = order_imbalance(df_full=df_full, df_ob=df_ob, df_pred=df_pred, delta=delta, type='hid')
 
@@ -218,13 +332,14 @@ def combined_order_imbalance(df_full, df_pred, df_ob, delta='5min'):
 
 
 def get_datetime_bins(df_full, delta):
+    # Get datetime bins based on timeframe
     if delta != 'daily':
         # Extract the first and last date from the datetime column
         start_date = df_full.index.get_level_values('datetime').min().date()
         end_date = df_full.index.get_level_values('datetime').max().date()
 
         # Set the time to start at 09:30 and end at 15:30
-        start_datetime = pd.Timestamp.combine(start_date, pd.Timestamp("09:30").time())
+        start_datetime = pd.Timestamp.combine(start_date, pd.Timestamp("10:00").time())
         start_datetime = start_datetime + pd.Timedelta(delta)
         end_datetime = pd.Timestamp.combine(end_date, pd.Timestamp("15:30").time())
 
@@ -354,128 +469,128 @@ def conditional_order_imbalance(df_full, df_pred, df_ob, delta='5min', condition
 
 
 
-def lm_results(df_full, df_pred, df_ob, delta_lst, order_type='combined', predictive=True, ret_type='log_ret',
-               momentum=False):
+# def lm_results(df_full, df_pred, df_ob, delta_lst, order_type='combined', predictive=True, ret_type='log_ret',
+#                momentum=False):
     
-    if ret_type == 'log_ret':
-        y = "fut_log_ret" if predictive else "log_ret"
-        x_momentum = "+ log_ret" if momentum else ""
+#     if ret_type == 'log_ret':
+#         y = "fut_log_ret" if predictive else "log_ret"
+#         x_momentum = "+ log_ret" if momentum else ""
 
-    elif ret_type == 'weighted_mp':
-        y = 'fut_weighted_log_ret' if predictive else "weighted_log_ret"
-        x_momentum = "+ weighted_log_ret" if momentum else ""
+#     elif ret_type == 'weighted_mp':
+#         y = 'fut_weighted_log_ret' if predictive else "weighted_log_ret"
+#         x_momentum = "+ weighted_log_ret" if momentum else ""
 
-    elif ret_type == 'tClose':
-        y = "fret_tClose" if predictive else "ret_tClose"
-        x_momentum = "+ ret_tClose" if momentum else ""
+#     elif ret_type == 'tClose':
+#         y = "fret_tClose" if predictive else "ret_tClose"
+#         x_momentum = "+ ret_tClose" if momentum else ""
     
-    elif ret_type == 'ClOp' or ret_type == 'ClCl':
-        y = f"fret_{ret_type}"
+#     elif ret_type == 'ClOp' or ret_type == 'ClCl' or ret_type == 'adjClOp':
+#         y = f"fret_{ret_type}"
 
-    elif ret_type == 'daily_ret':
-        y = "fut_daily_ret"
+#     elif ret_type == 'daily_ret':
+#         y = "fut_daily_ret"
 
     
-    params_lst = []
-    tvalues_lst = []
+#     params_lst = []
+#     tvalues_lst = []
 
-    for delta in delta_lst:
-        if order_type == 'vis' or order_type == 'hid' or order_type == 'combined':
-            df_merged = combined_order_imbalance(df_full, df_pred, df_ob, delta=delta)
+#     for delta in delta_lst:
+#         if order_type == 'vis' or order_type == 'hid' or order_type == 'combined' or order_type == 'all':
+#             df_merged = combined_order_imbalance(df_full, df_pred, df_ob, delta=delta)
 
-        elif order_type == 'comb_iceberg':
-            df_merged = iceberg_order_imbalance(df_full, df_pred, df_ob, delta=delta)
-            lm = smf.ols(formula=f"""{y} ~ order_imbalance_vis + order_imbalance_hid + order_imbalance_ib + {x_momentum}""", 
-                         data=df_merged).fit()
-            params_lst.append((lm.params[1], lm.params[2], lm.params[3]))
-            tvalues_lst.append((lm.tvalues[1], lm.tvalues[2], lm.tvalues[3]))
+#         elif order_type == 'comb_iceberg':
+#             df_merged = iceberg_order_imbalance(df_full, df_pred, df_ob, delta=delta)
+#             lm = smf.ols(formula=f"""{y} ~ order_imbalance_vis + order_imbalance_hid + order_imbalance_ib + {x_momentum}""", 
+#                          data=df_merged).fit()
+#             params_lst.append((lm.params[1], lm.params[2], lm.params[3]))
+#             tvalues_lst.append((lm.tvalues[1], lm.tvalues[2], lm.tvalues[3]))
 
-        elif order_type == 'agg':
-            df_merged = conditional_order_imbalance(df_full, df_pred, df_ob, delta=delta, condition='agg')
-            lm = smf.ols(formula=f"""{y} ~ order_imbalance_vis + order_imbalance_agg_low + \n
-                         order_imbalance_agg_mid + order_imbalance_agg_high {x_momentum}""", 
-                         data=df_merged).fit()
-            params_lst.append((lm.params[1], lm.params[2], lm.params[3], lm.params[4]))
-            tvalues_lst.append((lm.tvalues[1], lm.tvalues[2], lm.tvalues[3], lm.tvalues[4]))
+#         elif order_type == 'agg':
+#             df_merged = conditional_order_imbalance(df_full, df_pred, df_ob, delta=delta, condition='agg')
+#             lm = smf.ols(formula=f"""{y} ~ order_imbalance_vis + order_imbalance_agg_low + \n
+#                          order_imbalance_agg_mid + order_imbalance_agg_high {x_momentum}""", 
+#                          data=df_merged).fit()
+#             params_lst.append((lm.params[1], lm.params[2], lm.params[3], lm.params[4]))
+#             tvalues_lst.append((lm.tvalues[1], lm.tvalues[2], lm.tvalues[3], lm.tvalues[4]))
         
-        elif order_type == 'size':
-            df_merged = conditional_order_imbalance(df_full, df_pred, df_ob, delta=delta, condition='size')
-            lm = smf.ols(formula=f"""{y} ~ order_imbalance_vis + order_imbalance_small + \n
-                         order_imbalance_medium + order_imbalance_large {x_momentum}""", 
-                         data=df_merged).fit()
-            params_lst.append((lm.params[1], lm.params[2], lm.params[3], lm.params[4]))
-            tvalues_lst.append((lm.tvalues[1], lm.tvalues[2], lm.tvalues[3], lm.tvalues[4]))
+#         elif order_type == 'size':
+#             df_merged = conditional_order_imbalance(df_full, df_pred, df_ob, delta=delta, condition='size')
+#             lm = smf.ols(formula=f"""{y} ~ order_imbalance_vis + order_imbalance_small + \n
+#                          order_imbalance_medium + order_imbalance_large {x_momentum}""", 
+#                          data=df_merged).fit()
+#             params_lst.append((lm.params[1], lm.params[2], lm.params[3], lm.params[4]))
+#             tvalues_lst.append((lm.tvalues[1], lm.tvalues[2], lm.tvalues[3], lm.tvalues[4]))
 
-        if order_type == "vis":
-            lm = smf.ols(formula=f"""{y} ~ order_imbalance_vis {x_momentum}""", data=df_merged).fit()
-            params_lst.append(lm.params[1])
-            tvalues_lst.append(lm.tvalues[1])
+#         if order_type == "vis":
+#             lm = smf.ols(formula=f"""{y} ~ order_imbalance_vis {x_momentum}""", data=df_merged).fit()
+#             params_lst.append(lm.params[1])
+#             tvalues_lst.append(lm.tvalues[1])
 
-        elif order_type == "hid":
-            lm = smf.ols(formula=f"""{y} ~ order_imbalance_hid {x_momentum}""", data=df_merged).fit()
-            params_lst.append(lm.params[1])
-            tvalues_lst.append(lm.tvalues[1])
+#         elif order_type == "hid":
+#             lm = smf.ols(formula=f"""{y} ~ order_imbalance_hid {x_momentum}""", data=df_merged).fit()
+#             params_lst.append(lm.params[1])
+#             tvalues_lst.append(lm.tvalues[1])
 
-        elif order_type == "combined":
-            lm = smf.ols(formula=f"""{y} ~ order_imbalance_vis + order_imbalance_hid {x_momentum}""", data=df_merged).fit()
-            params_lst.append((lm.params[1], lm.params[2]))
-            tvalues_lst.append((lm.tvalues[1], lm.tvalues[2]))
-
-
-    if order_type == "vis" or order_type == "hid":
-        return pd.DataFrame({"timeframe": delta_lst, "params": params_lst, "tvalues": tvalues_lst})
-
-    elif order_type == "combined":
-        df = pd.DataFrame({
-            'timeframe': delta_lst,
-            'params_vis': [x[0] for x in params_lst],
-            'tvalues_vis': [x[0] for x in tvalues_lst],
-            'params_hid': [x[1] for x in params_lst],
-            'tvalues_hid': [x[1] for x in tvalues_lst]
-        })
-        return df
+#         elif order_type == "combined":
+#             lm = smf.ols(formula=f"""{y} ~ order_imbalance_vis + order_imbalance_hid {x_momentum}""", data=df_merged).fit()
+#             params_lst.append((lm.params[1], lm.params[2]))
+#             tvalues_lst.append((lm.tvalues[1], lm.tvalues[2]))
 
 
-    elif order_type == 'comb_iceberg':
-        df = pd.DataFrame({
-            'timeframe': delta_lst,
-            'params_vis': [x[0] for x in params_lst],
-            'tvalues_vis': [x[0] for x in tvalues_lst],
-            'params_hid': [x[1] for x in params_lst],
-            'tvalues_hid': [x[1] for x in tvalues_lst],
-            'params_ib': [x[2] for x in params_lst],
-            'tvalues_ib': [x[2] for x in tvalues_lst]
-        })
-        return df
+#     if order_type == "vis" or order_type == "hid":
+#         return pd.DataFrame({"timeframe": delta_lst, "params": params_lst, "tvalues": tvalues_lst})
+
+#     elif order_type == "combined":
+#         df = pd.DataFrame({
+#             'timeframe': delta_lst,
+#             'params_vis': [x[0] for x in params_lst],
+#             'tvalues_vis': [x[0] for x in tvalues_lst],
+#             'params_hid': [x[1] for x in params_lst],
+#             'tvalues_hid': [x[1] for x in tvalues_lst]
+#         })
+#         return df
 
 
-    elif order_type == 'agg':
-        df = pd.DataFrame({
-            'timeframe': delta_lst,
-            'params_vis': [x[0] for x in params_lst],
-            'tvalues_vis': [x[0] for x in tvalues_lst],
-            'params_agg_low': [x[1] for x in params_lst],
-            'tvalues_agg_low': [x[1] for x in tvalues_lst],
-            'params_agg_mid': [x[2] for x in params_lst],
-            'tvalues_agg_mid': [x[2] for x in tvalues_lst],
-            'params_agg_high': [x[3] for x in params_lst],
-            'tvalues_agg_high': [x[3] for x in tvalues_lst],
-        })
-        return df
+#     elif order_type == 'comb_iceberg':
+#         df = pd.DataFrame({
+#             'timeframe': delta_lst,
+#             'params_vis': [x[0] for x in params_lst],
+#             'tvalues_vis': [x[0] for x in tvalues_lst],
+#             'params_hid': [x[1] for x in params_lst],
+#             'tvalues_hid': [x[1] for x in tvalues_lst],
+#             'params_ib': [x[2] for x in params_lst],
+#             'tvalues_ib': [x[2] for x in tvalues_lst]
+#         })
+#         return df
+
+
+#     elif order_type == 'agg':
+#         df = pd.DataFrame({
+#             'timeframe': delta_lst,
+#             'params_vis': [x[0] for x in params_lst],
+#             'tvalues_vis': [x[0] for x in tvalues_lst],
+#             'params_agg_low': [x[1] for x in params_lst],
+#             'tvalues_agg_low': [x[1] for x in tvalues_lst],
+#             'params_agg_mid': [x[2] for x in params_lst],
+#             'tvalues_agg_mid': [x[2] for x in tvalues_lst],
+#             'params_agg_high': [x[3] for x in params_lst],
+#             'tvalues_agg_high': [x[3] for x in tvalues_lst],
+#         })
+#         return df
     
-    elif order_type == 'size':
-        df = pd.DataFrame({
-            'timeframe': delta_lst,
-            'params_vis': [x[0] for x in params_lst],
-            'tvalues_vis': [x[0] for x in tvalues_lst],
-            'params_small': [x[1] for x in params_lst],
-            'tvalues_small': [x[1] for x in tvalues_lst],
-            'params_medium': [x[2] for x in params_lst],
-            'tvalues_medium': [x[2] for x in tvalues_lst],
-            'params_large': [x[3] for x in params_lst],
-            'tvalues_large': [x[3] for x in tvalues_lst],
-        })
-        return df
+#     elif order_type == 'size':
+#         df = pd.DataFrame({
+#             'timeframe': delta_lst,
+#             'params_vis': [x[0] for x in params_lst],
+#             'tvalues_vis': [x[0] for x in tvalues_lst],
+#             'params_small': [x[1] for x in params_lst],
+#             'tvalues_small': [x[1] for x in tvalues_lst],
+#             'params_medium': [x[2] for x in params_lst],
+#             'tvalues_medium': [x[2] for x in tvalues_lst],
+#             'params_large': [x[3] for x in params_lst],
+#             'tvalues_large': [x[3] for x in tvalues_lst],
+#         })
+#         return df
 
 
 def diagnostic_plots(lm, y, data):
