@@ -14,17 +14,31 @@ def main():
                   'DVA', 'FFIV', 'FRT', 'HII', 'HRL', 'HSIC', 'INCY',
                   'MHK', 'NWSA', 'PNW', 'RL', 'TAP', 'WYNN']
 
+# Top tickers for 2 minutes and 30 minutes portfolios
+# 2min
+# All - ['INCY', 'NWSA', "BXP', 'APA', 'TAP']
+# iceberg - ['BXP', 'INCY', 'DVA', 'APA', 'TAP']
+# combined - ['APA', 'NWSA', 'DVA', 'BXP', 'TAP']
+
+# 30min
+# All - ['HSIC', 'ALB', 'MHK', 'BXP', 'INCY']
+# iceberg - ['NWSA', 'HSIC', 'ALB', 'BEN', 'BXP']
+# comb - ['HSIC', 'ALB', 'MHK', 'BXP', 'INCY']
+
     testing_year = "2019"
     order_type = 'combined'
     ret_type = "log_ret_ex"
+    momentum = True
 
-    delta = '30S'
-    percentile = 0.2
+    delta = '30min'
+    prev_days = 10
+    percentile = 1/5
     pos_threshold = 0
     neg_threshold = 0
-    result_path = "/nfs/home/jingt/dissertation-iceberg/data/output_results/strategy_results"
-    file_name_results = "results_portfolio_combined_log_ret_ex_update_2min.csv"
-    file_name_counts = "counts_portfolio_combined_log_ret_ex_update_2min.csv"
+    result_path = "/nfs/home/jingt/dissertation-iceberg/data/trading_strat"
+    file_name_results = "results_30min_comb_red.csv"
+    file_name_counts = "counts_30min_comb_red.csv"
+    pnl_file_name = 'pnl_30min_comb_red.csv'
 
 
     ## ------------------------------------
@@ -44,9 +58,9 @@ def main():
 
         
     start = time.time()
-    df_result_all, df_counts_all = portfolio_update_signals(ticker_lst, delta, order_type, ret_type, model_path, 
+    df_result_all, df_counts_all, df_pnl_all = portfolio_update_signals(ticker_lst, delta, order_type, ret_type, model_path, 
                                                             save_file_path=result_path, result_file_name=file_name_results, count_file_name=file_name_counts,
-                                                            percentile=percentile, momentum=False, year=2019)
+                                                            pnl_file_name=pnl_file_name, prev_days=prev_days, percentile=percentile, momentum=momentum, year=2019)
 
 
 
