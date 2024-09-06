@@ -18,37 +18,9 @@ import os
 
 warnings.filterwarnings('ignore')
 
-# class DataPreprocessor(BaseEstimator, TransformerMixin):
-#     def __init__(self):
-#         pass
-
-#     def fit(self, X, y=None, ticker_name=None):
-#         self.ticker_name = ticker_name
-#         return self
-
-#     def transform(self, X, y=None):
-#         df_m, df_ob = X
-#         df_m_mh, df_ob_mh = data_preprocessing(df_m, df_ob, self.ticker_name)
-#         return df_m_mh, df_ob_mh
-
-# class FeatureCreator(BaseEstimator, TransformerMixin):
-#     def __init__(self, labelled=False):
-#         self.labelled = labelled
-
-#     def fit(self, X, y=None):
-#         return self
-
-#     def transform(self, X, y=None):
-#         df_m_mh, df_ob_mh = X
-#         if self.labelled:
-#             features_df, output_df = prediction_feature(df_m_mh, df_ob_mh, labelled=self.labelled)
-#             return {"X": features_df, "y": output_df}
-#         else:
-#             features_df = prediction_feature(df_m_mh, df_ob_mh, labelled=self.labelled)
-#             return features_df
         
 def extract_info_from_filename(file_name):
-    # Split the filename by underscores
+    # Extract ticker and date info from files
     parts = file_name.split('_')
     # Extract the date and ticker symbol (assuming the format is consistent)
     ticker = parts[0]
@@ -56,8 +28,7 @@ def extract_info_from_filename(file_name):
     return ticker, date
 
 def add_date_ticker(df_m, date, ticker):
-    '''Add date to dataframe'''
-    # df_m = df_m.dropna(axis=1, how='all')
+    # Add date to timeframe
     if 6 in df_m.columns:
         df_m = df_m.drop(columns=[6])    
     df_m['ticker'] = ticker
@@ -106,14 +77,11 @@ def concatenate_csv_files(folder_path):
 
     return concatenated_df_m, concatenated_df_ob
 
-    # Example code:
-    # folder_path = '/vols/teaching/msc-projects/2023-2024/jitan/dissertation-iceberg/data/SPY_2019/'
-    # concatenated_df_m, concatenated_df_ob = concatenate_csv_files(folder_path)
 
 
-
-def data_preprocessing(df_m, df_ob, ticker_name=None):
-    '''Preprocess message and orderbook dataframe'''
+def data_preprocessing(df_m, df_ob, ticker_name=None, start_time="10:00:00",
+                       end_time="15:30:00"):
+    # Preprocess messages and orderbook dataframes
     df_ob['ticker'] = ticker_name
 
     OB_header = []
@@ -138,8 +106,8 @@ def data_preprocessing(df_m, df_ob, ticker_name=None):
     df_ob.index = df_m.index
 
     # Define the start and end times
-    start_time = pd.to_datetime("09:30:00").time()
-    end_time = pd.to_datetime("15:30:00").time()
+    start_time = pd.to_datetime(start_time).time()
+    end_time = pd.to_datetime(end_time).time()
 
     # Extract the 'datetime' level from the MultiIndex and filter based on the time
     filtered_index = df_m.index.get_level_values('datetime').to_series().between_time(start_time, end_time).index
@@ -165,17 +133,7 @@ def data_preprocessing(df_m, df_ob, ticker_name=None):
 
 
 def direction_adjacent_event(df, event_type, order='prev'):
-    """
-    Get direction of previous or next event_type.
-    
-    Parameters:
-    df (pd.DataFrame): The dataframe containing event data.
-    event_type (int): The event type to find direction for.
-    order (str): Whether to find the 'prev' or 'next' event. Default is 'prev'.
-    
-    Returns:
-    pd.DataFrame: Dataframe with added feature columns.
-    """
+    # Get direction of previous or next event
     column_name = f"{order}_dir_t{event_type}"
     
     if order == 'prev':
@@ -189,7 +147,7 @@ def direction_adjacent_event(df, event_type, order='prev'):
 
 
 def trade_sentiment(df):
-    '''Obtain trading sentiment before and after particular trade event'''
+    # Obtain trade sentiment for previous or next events
     conditions = [
     (df['event_type'] == 1),
     (df['event_type'] == 3),
@@ -261,7 +219,7 @@ def prediction_feature(df_m_mh, df_ob_mh, labelled=False, standardise=True):
     numerical_columns = ['size']
     
     # Standardise numerical columns
-    if standardise:
+    if standardise and not features_df.empty:
         scaler = StandardScaler()
         features_df[numerical_columns] = scaler.fit_transform(features_df[numerical_columns])
 
@@ -287,7 +245,7 @@ def prediction_feature(df_m_mh, df_ob_mh, labelled=False, standardise=True):
 
 
 def hid_outside_spread_tag(pred_features_df, y_pred_df):
-    '''Tag direction for hidden orders outside BA spread'''
+    # Tag direction of trades not within the spread
     y_pred_df = y_pred_df.merge(pred_features_df['agg_ratio'], left_index=True, right_index=True)
 
     # Tag buy hidden liquidity execution
@@ -306,7 +264,7 @@ def hid_outside_spread_tag(pred_features_df, y_pred_df):
 
 def train_and_evaluate_model(classifier, grid, df_ob_labelled_lst, df_m_labelled_lst, tickers_train,
                              df_ob_predict_lst, df_m_predict_lst, tickers_pred):
-    '''Perform model training and classification'''
+    # Perform model training
 
     # Set up training data
     labelled_features_lst = []
@@ -406,6 +364,7 @@ def train_and_evaluate_model(classifier, grid, df_ob_labelled_lst, df_m_labelled
 
 
 def save_dataframe_to_folder(df, folder_path, file_name):
+    # Save dataframe to specified folder
     # Ensure the folder exists
     os.makedirs(folder_path, exist_ok=True)
     # Create the full file path
@@ -413,67 +372,3 @@ def save_dataframe_to_folder(df, folder_path, file_name):
     # Save the dataframe to a CSV file
     df.to_csv(file_path, index=False)
     print(f"DataFrame saved to {file_path}")
-
-# # Example usage:
-# # Create a sample DataFrame
-# data = {'A': [1, 2, 3], 'B': [4, 5, 6]}
-# df = pd.DataFrame(data)
-
-# # Specify the folder path and file name
-# folder_path = '/path/to/your/folder'
-# file_name = 'processed_data.csv'
-
-# # Save the DataFrame
-# save_dataframe_to_folder(df, folder_path, file_name)
-
-
-# # Define the training pipeline
-# training_pipeline = Pipeline([
-#     ('preprocessing', DataPreprocessor()),
-#     ('feature_creation', FeatureCreator(labelled=True)),
-#    # ('classifier', RandomForestClassifier())
-# ])
-
-# # Define the prediction pipeline (without the classifier step)
-# prediction_pipeline = Pipeline([
-#     ('preprocessing', DataPreprocessor()),
-#     ('feature_creation', FeatureCreator(labelled=False))
-# ])
-
-
-# df_m_train = pd.read_csv("./data/LOB_2012/MSFT_2012-06-21_34200000_57600000_message_10.csv", header=None)
-# df_ob_train = pd.read_csv("./data/LOB_2012/MSFT_2012-06-21_34200000_57600000_orderbook_10.csv", header=None)
-# X_train = (df_m_train, df_ob_train)
-# training_pipeline.fit(X_train, preprocessing__ticker_name='MSFT')
-
-
-
-# #________TRAINING EXAMPLE_____________
-
-# # Example training data (Replace with actual data)
-# df_m_train = pd.DataFrame()  # Your training message data here
-# df_ob_train = pd.DataFrame()  # Your training order book data here
-# X_train = (df_m_train, df_ob_train)  # Input tuple for the training pipeline
-
-# # Fit the preprocessing and feature creation steps
-# training_pipeline.named_steps['preprocessing'].fit(X_train, ticker_name='AAPL')
-# df_m_mh_train, df_ob_mh_train = training_pipeline.named_steps['preprocessing'].transform(X_train)
-# features_train, labels_train = training_pipeline.named_steps['feature_creation'].fit_transform((df_m_mh_train, df_ob_mh_train))
-
-# # Fit the classifier with the extracted features and labels
-# training_pipeline.named_steps['classifier'].fit(features_train, labels_train)
-
-# #________PREDICTION EXAMPLE_____________
-
-# df_m_predict = pd.DataFrame()  # Your prediction message data here
-# df_ob_predict = pd.DataFrame()  # Your prediction order book data here
-# X_predict = (df_m_predict, df_ob_predict)  # Input tuple for the prediction pipeline
-
-# # Fit the preprocessing and feature creation steps for the new ticker
-# prediction_pipeline.named_steps['preprocessing'].fit(X_predict, ticker_name='AAPL')
-# df_m_mh_predict, df_ob_mh_predict = prediction_pipeline.named_steps['preprocessing'].transform(X_predict)
-# features_predict = prediction_pipeline.named_steps['feature_creation'].transform((df_m_mh_predict, df_ob_mh_predict))
-
-# # Predict using the classifier from the training pipeline
-# predictions = training_pipeline.named_steps['classifier'].predict(features_predict)
-
