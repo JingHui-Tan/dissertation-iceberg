@@ -23,7 +23,7 @@ logging.getLogger().setLevel(logging.WARNING)
 
 
 def iceberg_tag(df, ib_delta):
-    '''Add a column tagging whether trade is an iceberg execution'''
+    # Add a column tagging whether trade is an iceberg execution
     event_type_4 = df[df['event_type'] == 4]
     event_type_1 = df[df['event_type'] == 1]
 
@@ -31,6 +31,7 @@ def iceberg_tag(df, ib_delta):
     event_type_4 = event_type_4.sort_values(by='datetime')
     event_type_1 = event_type_1.sort_values(by='datetime')
 
+    # Merge based on small delta timeframe
     merged = pd.merge_asof(
         event_type_4,
         event_type_1,
@@ -48,6 +49,7 @@ def iceberg_tag(df, ib_delta):
 
 
 def fetch_ticker_data_with_retry(ticker, date, retries=10, delay=5, include_prev=False):
+    # Get ticker and SPY data from yfinance with retries
     if not include_prev:
         for i in range(retries):
             try:
@@ -81,8 +83,9 @@ def fetch_ticker_data_with_retry(ticker, date, retries=10, delay=5, include_prev
 
 
 def calculate_log_returns(grouped, delta, ticker=None):
-    # Define ticker and date
     current_date = grouped['datetime_bins'][0].date()
+
+    # Calculate log returns for intraday timeframe
     if delta != 'daily':
         grouped['log_ret'] = np.log(grouped['last_midprice']) - np.log(grouped['first_midprice'])
         grouped['fut_log_ret'] = grouped['log_ret'].shift(-1)
@@ -184,6 +187,7 @@ def calculate_log_returns(grouped, delta, ticker=None):
 
     #_______________________
 
+    # Calculate returns for daily timeframe
     # Version below directly uses yfinance
     if delta == 'daily':
 
@@ -356,6 +360,7 @@ def get_datetime_bins(df_full, delta):
 
 
 def iceberg_order_imbalance(df_full, df_pred, df_ob, delta='5min', weighted=False):
+    # Calculate VHI order imbalance
     weight = df_ob['bid_size_1'] / (df_ob['bid_size_1'] + df_ob['ask_size_1'])
     df_full['weighted_mp'] = weight * df_ob['ask_price_1'] + (1 - weight) * df_ob['bid_price_1']
     ib_delta = '1ms'
@@ -412,6 +417,7 @@ def iceberg_order_imbalance(df_full, df_pred, df_ob, delta='5min', weighted=Fals
 
 
 def agg_order(df, df_pred, agg='agg_low'):
+    # Calculate conditional OI based on aggressiveness of orders
     df = df[df['event_type']==5]
 
     if agg=='agg_low':
@@ -427,6 +433,7 @@ def agg_order(df, df_pred, agg='agg_low'):
 
 
 def size_order(df, df_pred, size='small'):
+    # Calculate conditional OI based on size of orders
     df = df[df['event_type']==5]
     lower_q = df['size'].quantile(1/3)
     upper_q = df['size'].quantile(2/3)
@@ -443,7 +450,7 @@ def size_order(df, df_pred, size='small'):
 
 
 def conditional_order_imbalance(df_full, df_pred, df_ob, delta='5min', condition='agg'):
-
+    # Calculate conditional OI based on either aggressiveness or size
     df_fin = order_imbalance(df_full=df_full, delta=delta, df_ob=df_ob, type='vis')
     df_fin.rename(columns={'order_imbalance': 'order_imbalance_vis'}, inplace=True)
 
