@@ -9,18 +9,15 @@ from sklearn.metrics import mean_squared_error, r2_score
 from order_imbalance import get_datetime_bins
 from prediction_ML_pipeline import save_dataframe_to_folder
 import os
-
+from datetime import datetime
 
 
 
 def OI_signals_daily_ticker(params_df, ticker, date, delta, order_type, ret_type, model_path):
-    # For a particular day
-    # For each ticker, predict direction and calculate OI signals for ticker
-    # Output dataframe of OI signals for particular day for all tickers
-    # Output should be time | ticker | OI Signal | fut_log_ret_ex (next bucket)
+    # For a particular day and ticker, predict direction and calculate OI signals for ticker
 
     # Obtain Order Imbalance for ticker in specified date
-    year = date[:4] # Check if this is the correct form
+    year = date[:4]
     test_file_path = f"/nfs/data/lobster_data/lobster_raw/2017-19/_data_dwn_32_302__{ticker}_{year}-01-01_{year}-12-31_10.7z"
     model_name = f"xgboost_{ticker}.json"
 
@@ -37,7 +34,7 @@ def OI_signals_daily_ticker(params_df, ticker, date, delta, order_type, ret_type
         signal_df = OI_df[["datetime_bins", "fut_log_ret_ex"]]
         signal_df['ticker'] = ticker
 
-    if ret_type == "ClCl" or ret_type == 'ClOp':
+    if ret_type == "ClCl" or ret_type == 'ClOp' or ret_type == 'adjClOp':
         signal_df = OI_df[['datetime_bins', f'fret_{ret_type}']]
 
     else:
@@ -65,10 +62,7 @@ def OI_signals_daily_ticker(params_df, ticker, date, delta, order_type, ret_type
 
 def portfolio_construction_daily(params_df, ticker_lst, date, delta, 
                                  order_type, ret_type, model_path, percentile=0.2):
-    # Call OI signal calculation
-    # Rank signals fot tickers for each delta bucket
-    # Calculate PnL for day of entire strategy and other statistics
-    # Calculate PnL for each ticker
+    # Rank signals fot tickers for each delta bucket and calculate PnL
     signal_df_all = []
 
     # Merge all signal dataframes for each ticker
@@ -111,10 +105,7 @@ def portfolio_construction_daily(params_df, ticker_lst, date, delta,
 
 
 def process_signals(params_df, ticker_lst, delta, ret_type, model_path, order_type, percentile=0.2, year=2019):
-    # Loops through each day
-    # Feeds data into OI signals daily
-    # Feeds df into signal_ranking_daily
-    # Calculate overall strategy statistics
+    # Loops through each day, feeds data into OI signals daily, Calculate overall strategy statistics
 
     total_runs_lst = []
     PnL_results_lst = []
@@ -145,14 +136,15 @@ def process_signals(params_df, ticker_lst, delta, ret_type, model_path, order_ty
 
 
 def update_strategy_single_daily(ticker, date, delta, order_type, ret_type, model_path, prev_days=5, momentum=False):
-    # Obtain Order Imbalance for ticker in specified date
-    year = date[:4] # Check if this is the correct form
+    # Calculate signals for the current day for specified ticker using coefficients obtained from previous trading days
+ 
+    year = date[:4]
     test_file_path = f"/nfs/data/lobster_data/lobster_raw/2017-19/_data_dwn_32_302__{ticker}_{year}-01-01_{year}-12-31_10.7z"
     model_name = f"xgboost_{ticker}.json"
 
     OI_df_lst = []
 
-    if ret_type != 'ClOp' and ret_type != 'ClCl':
+    if ret_type != 'ClOp' and ret_type != 'ClCl' and ret_type != 'adjClOp':
         # Define the exchange calendar (XNYS is typically used for NYSE)
         nyse = mcal.get_calendar('XNYS')
 
@@ -166,7 +158,7 @@ def update_strategy_single_daily(ticker, date, delta, order_type, ret_type, mode
         # Convert to a list of strings
         days_before_list = days_before.strftime('%Y-%m-%d').tolist()
 
-    if ret_type == "ClOp" or ret_type == "ClCl":
+    if ret_type == "ClOp" or ret_type == "ClCl" or ret_type == 'adjClOp':
         # List to store filenames without the .csv.gz extension
         file_names_without_extension = []
         fret_folder = "/nfs/home/jingt/dissertation-iceberg/data/fret_folder"
@@ -195,6 +187,7 @@ def update_strategy_single_daily(ticker, date, delta, order_type, ret_type, mode
         for day in days_before_list_all:
             if day in file_names_without_extension:
                 days_before_list.append(day)
+                
         print(days_before_list)
     for trading_date in days_before_list:
         # Calculate OI imbalance
@@ -206,6 +199,8 @@ def update_strategy_single_daily(ticker, date, delta, order_type, ret_type, mode
         OI_df_lst.append(OI_df)
     
     OI_df_full = pd.concat(OI_df_lst)
+
+    # Calculate OI for current day
     OI_df_curr = order_imbalance_calc(test_file_path, delta_lst=[delta], model=None,
                                     model_path=model_path, model_name=model_name,
                                     order_type=order_type, specific_date=date, ticker=ticker)
@@ -214,6 +209,7 @@ def update_strategy_single_daily(ticker, date, delta, order_type, ret_type, mode
     coefficients_dict = {
         'vis': ['order_imbalance_vis'],
         'hid': ['order_imbalance_hid'],
+        'all': ['order_imbalance_all'],
         'combined': ['order_imbalance_vis', 'order_imbalance_hid'],
         'comb_iceberg': ['order_imbalance_vis', 'order_imbalance_hid', 'order_imbalance_ib'],
         'size': ['order_imbalance_vis', 'order_imbalance_small', 
@@ -222,46 +218,49 @@ def update_strategy_single_daily(ticker, date, delta, order_type, ret_type, mode
                 'order_imbalance_agg_mid', 'order_imbalance_agg_high']
     }
 
+    # Fit linear regression model on previous days
     X_coef = coefficients_dict[order_type]
-
 
     if ret_type == "log_ret_ex":
         output = "fut_log_ret_ex"
         if momentum:
             X_coef += ['log_ret_ex']
         
-    elif ret_type == "ClOp" or ret_type == "ClCl":
+    elif ret_type == "ClOp" or ret_type == "ClCl" or ret_type=='adjClOp':
         output = f'fret_{ret_type}'
+        if momentum:
+            X_coef += [f'{ret_type}', 'SMB', 'HML', 'RF'] # Based on FF three-factor model
     
     X_train = OI_df_full[X_coef].fillna(0).replace(-np.inf, 0).replace(np.inf, 0)
     y_train = OI_df_full[output].fillna(0).replace(-np.inf, 0).replace(np.inf, 0)
 
+    # Fit linear regression
     model = LinearRegression(n_jobs=-1)
     model.fit(X_train, y_train)
 
-    signal = model.predict(OI_df_curr[X_coef].fillna(0))
-    
+    # Predict fret for current days as signal
+    signal = model.predict(OI_df_curr[X_coef].fillna(0).replace(-np.inf, 0).replace(np.inf, 0))
     signal_df = OI_df_curr[[output]]
     signal_df["signal"] = signal
-
     return signal_df
 
 
-def get_trading_days(ret_type):
+def get_trading_days(ret_type, year=2019):
+    # Get training day for current year, filter ClOp trading days based on fret file
 
-    if ret_type != 'ClCl' and ret_type != 'ClOp':
+    if ret_type == 'log_ret_ex':
+        if year == 2019:
+            nasdaq = mcal.get_calendar('XNYS')  # XNYS is often used for NASDAQ
+            # Get the trading schedule for the entire year
+            trading_schedule = nasdaq.sessions_in_range(f'{year}-01-01', f'{year}-12-31')
+            # Convert to a list of strings
+            trading_days_lst = trading_schedule.strftime('%Y-%m-%d').tolist()
+            return trading_days_lst
+
+    if ret_type == "ClCl" or ret_type == 'ClOp' or ret_type =='adjClOp':
         nasdaq = mcal.get_calendar('XNYS')  # XNYS is often used for NASDAQ
         # Get the trading schedule for the entire year
-        trading_schedule = nasdaq.sessions_in_range(f'{2019}-01-01', f'{2019}-12-31')
-        # Convert to a list of strings
-        trading_days_lst = trading_schedule.strftime('%Y-%m-%d').tolist()
-        return trading_days_lst
-
-
-    if ret_type == "ClCl" or ret_type == 'ClOp':
-        nasdaq = mcal.get_calendar('XNYS')  # XNYS is often used for NASDAQ
-        # Get the trading schedule for the entire year
-        trading_schedule = nasdaq.sessions_in_range(f'{2019}-01-01', f'{2019}-12-31')
+        trading_schedule = nasdaq.sessions_in_range(f'{year}-01-01', f'{year}-12-31')
         # Convert to a list of strings
         trading_days_lst = trading_schedule.strftime('%Y-%m-%d').tolist()
         
@@ -290,22 +289,27 @@ def get_trading_days(ret_type):
 def combined_strategy_function(ticker, delta, order_type, ret_type, model_path, 
                                pos_threshold=0, neg_threshold=0, weighted=False, momentum=False, year=2019, 
                                prev_days=5, use_update_strategy=True, params_df=None):
+    # Call specified signal strategy and compute daily PnL
     result_lst_unweighted = []
     result_lst_weighted = []
 
     if ret_type == 'log_ret_ex':
         returns = 'fut_log_ret_ex'
     
-    elif ret_type == 'ClOp' or ret_type == 'ClCl':
+    elif ret_type == 'ClOp' or ret_type == 'ClCl' or ret_type =='adjClOp':
         returns = f'fret_{ret_type}'
+    
+    # Get trading days for specified year
+    trading_days_lst = get_trading_days(ret_type, year=year)
 
-    trading_days_lst = get_trading_days(ret_type)
-
+    # Calculate signals for each trading day
     for date in trading_days_lst[6:] if use_update_strategy else trading_days_lst:
         if use_update_strategy:
             signal_day = update_strategy_single_daily(ticker, date, delta, order_type, ret_type, model_path, prev_days=prev_days, momentum=momentum)
         else:
             signal_day = OI_signals_daily_ticker(params_df, ticker, date, delta, order_type, ret_type, model_path)
+
+        # Calculate PnL
 
         # Unweighted calculations
         positive_sum_unweighted = signal_day[signal_day['signal'] > pos_threshold][returns].sum()
@@ -341,16 +345,22 @@ def combined_strategy_function(ticker, delta, order_type, ret_type, model_path,
 
 
 def portfolio_update_signals(ticker_lst, delta, order_type, ret_type, model_path, 
-                             save_file_path, result_file_name, count_file_name, pnl_file_name,
+                             save_file_path, result_file_name, count_file_name, pnl_file_name, params_path=None, version=False, 
                              prev_days=3, percentile=0.2, momentum=False, year=2019):
-
-    trading_days_lst = get_trading_days(ret_type)
-    top_percentile = int(percentile * len(ticker_lst))
-
+    # Run portfolio strategy for specified list of tickers, timeframe, return type
     result_all_lst = []
     df_counts_all_lst = []
     df_pnl_ticker_lst = []
+    top_percentile = int(percentile * len(ticker_lst))
 
+    if ret_type == 'log_ret_ex':
+        target = 'fut_log_ret_ex'
+    
+    elif ret_type == 'ClCl' or ret_type == 'ClOp' or ret_type == 'adjClOp':
+        target = f'fret_{ret_type}'
+
+    
+    trading_days_lst = get_trading_days(ret_type, year=year)
 
     for date in trading_days_lst[6:]:
         signal_day = []
@@ -358,34 +368,43 @@ def portfolio_update_signals(ticker_lst, delta, order_type, ret_type, model_path
         start_date = date
         end_date = date
 
-        # Set the time to start at 09:30 and end at 15:30
-        start_datetime = pd.Timestamp.combine(pd.to_datetime(start_date), pd.Timestamp("10:00").time())
-        start_datetime = start_datetime + pd.Timedelta(delta)
-        end_datetime = pd.Timestamp.combine(pd.to_datetime(end_date), pd.Timestamp("15:30").time())
+        if not delta == 'daily':
+            start_datetime = pd.Timestamp.combine(pd.to_datetime(start_date), pd.Timestamp("10:00").time())
+            start_datetime = start_datetime + pd.Timedelta(delta)
+            end_datetime = pd.Timestamp.combine(pd.to_datetime(end_date), pd.Timestamp("15:30").time())
 
-        # Generate the full range of datetime bins with the specified frequency
-        full_range = pd.date_range(start=start_datetime, end=end_datetime, freq=delta)
+            # Generate the full range of datetime bins with the specified frequency
+            full_range = pd.date_range(start=start_datetime, end=end_datetime, freq=delta)
 
-        # Create the DataFrame with the datetime bins
-        full_bins = pd.DataFrame(full_range, columns=['datetime_bins']) 
+            # Create the DataFrame with the datetime bins
+            full_bins = pd.DataFrame(full_range, columns=['datetime_bins'])
 
+        if delta == 'daily':
+            start_date_dt = datetime.strptime(start_date, '%Y-%m-%d')
+            start_date_dt = start_date_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+            full_bins = pd.DataFrame([start_date_dt], columns=['datetime_bins'])
+
+        # Compute signal for each ticker for current day
         for ticker in ticker_lst:
             signal_df_ticker_daily = update_strategy_single_daily(ticker, date, delta, order_type, 
-                                                                  ret_type, model_path, prev_days=prev_days, momentum=momentum)
+                                                                ret_type, model_path, prev_days=prev_days, momentum=momentum)
             signal_df_ticker_daily['ticker'] = ticker
-            signal_df_ticker_daily['datetime_bins'] = full_bins['datetime_bins']            
+            signal_df_ticker_daily['datetime_bins'] = full_bins['datetime_bins']  
             signal_day.append(signal_df_ticker_daily)
 
         df_signal_day = pd.concat(signal_day).reset_index(drop=True)
+
+        # Group by 'datetime_bins' and compute rank of signal
         df_signal_day['signal_rank'] = df_signal_day.groupby('datetime_bins')['signal'].rank(method='first', ascending=False)
-        
+
+        # Obtain top and bottom signals for portfolio strategy
         top_signals = df_signal_day[df_signal_day['signal_rank'] <= top_percentile]
         top_signals = top_signals[top_signals['signal'] > 0]
         bottom_signals = df_signal_day[df_signal_day['signal_rank'] > len(ticker_lst) - top_percentile]
         bottom_signals = bottom_signals[bottom_signals['signal'] < 0]
 
 
-            # Group by 'ticker' and count the occurrences for top signals
+        # Group by 'ticker' and count the occurrences for top signals
         top_counts = top_signals.groupby('ticker').count()[['signal']]
         top_counts.rename(columns={'signal': 'top_counts'}, inplace=True)
 
@@ -398,19 +417,21 @@ def portfolio_update_signals(ticker_lst, delta, order_type, ret_type, model_path
         df_counts.reset_index(inplace=True)
         df_counts['date'] = date
     
-        top_sum  = top_signals['fut_log_ret_ex'].sum()
-        bottom_sum = bottom_signals['fut_log_ret_ex'].sum()
+        # Obtain PnL of top and bottom signals
+        top_sum  = top_signals[target].sum()
+        bottom_sum = bottom_signals[target].sum()
 
-        top_sum_by_ticker = top_signals.groupby('ticker')['fut_log_ret_ex'].sum().reset_index()
-        top_sum_by_ticker.rename(columns={'fut_log_ret_ex': 'top_pnl'}, inplace=True)
+        # Compute ticker level PnL
+        top_sum_by_ticker = top_signals.groupby('ticker')[target].sum().reset_index()
+        top_sum_by_ticker.rename(columns={target: 'top_pnl'}, inplace=True)
 
-        bottom_sum_by_ticker = bottom_signals.groupby('ticker')['fut_log_ret_ex'].sum().reset_index()
-        bottom_sum_by_ticker.rename(columns={'fut_log_ret_ex': 'bottom_pnl'}, inplace=True)
-
+        bottom_sum_by_ticker = bottom_signals.groupby('ticker')[target].sum().reset_index()
+        bottom_sum_by_ticker.rename(columns={target: 'bottom_pnl'}, inplace=True)
         pnl_by_ticker = pd.merge(top_sum_by_ticker, bottom_sum_by_ticker, left_on='ticker', right_on='ticker', how='outer')
         pnl_by_ticker.fillna(0, inplace=True)
         pnl_by_ticker['date'] = date
 
+        # Compute final PnL and number of runs
         result = top_sum - bottom_sum
         number_runs = len(signal_df_ticker_daily)
 
@@ -420,6 +441,7 @@ def portfolio_update_signals(ticker_lst, delta, order_type, ret_type, model_path
             print(df_counts, flush=True)
             print(pnl_by_ticker, flush=True)
 
+        # Create dataframes for future analysis
         result_df = pd.DataFrame({'date': [date], 'PnL': [result], 'no. runs': [number_runs]})
 
         result_all_lst.append(result_df)
@@ -440,3 +462,64 @@ def portfolio_update_signals(ticker_lst, delta, order_type, ret_type, model_path
             print(df_result_all, flush=True)
     
     return df_result_all, df_counts_all, df_pnl_all
+
+
+
+
+def ClOp_signal(params_path, ticker_lst, order_type, model_path, ret_type='ClOp', delta='daily',
+                percentile=0.05):
+    # Compute signals for ClOp daily strategy
+    signal_lst = []
+    for ticker in ticker_lst:
+        # Obtain Order Imbalance for ticker in specified date
+        test_file_path = f"/nfs/data/lobster_data/lobster_raw/2017-19/_data_dwn_32_302__{ticker}_{2019}-01-01_{2019}-12-31_10.7z"
+        model_name = f"xgboost_{ticker}.json"
+        params_df = pd.read_csv(params_path)
+
+        params_df_ticker = params_df[(params_df['ticker'] == ticker) & (params_df['timeframe'] == delta)]
+        print(params_df_ticker)
+
+        # Calculate OI imbalance
+        OI_df = order_imbalance_calc(test_file_path, delta_lst=[delta], model=None,
+                                    model_path=model_path, model_name=model_name,
+                                    order_type=order_type, ticker=ticker)
+
+        OI_df = OI_df[delta]
+
+
+        signal_df = OI_df[['datetime_bins', f'fret_ClOp']]
+
+        # Compute signal based on order_type specified
+        if order_type == "combined":
+            signal_df['signal'] = (float(params_df_ticker['intercept'].iloc[0]) 
+                                + float(params_df_ticker['params_vis'].iloc[0]) * OI_df['order_imbalance_vis'] 
+                                + float(params_df_ticker['params_hid'].iloc[0]) * OI_df['order_imbalance_hid'])
+        
+        elif order_type == 'all':
+            signal_df['signal'] = (float(params_df_ticker['intercept'].iloc[0]) 
+                                + float(params_df_ticker['params_all'].iloc[0]) * OI_df['order_imbalance_all'])
+        
+        elif order_type == 'hid':
+            signal_df['signal'] = (float(params_df_ticker['intercept'].iloc[0])
+                                + float(params_df_ticker['params_hid'].iloc[0]) * OI_df['order_imbalance_hid'])
+        
+        elif order_type == 'comb_iceberg':
+            signal_df['signal'] = (float(params_df_ticker['intercept'].iloc[0]) 
+                                + float(params_df_ticker['params_vis'].iloc[0]) * OI_df['order_imbalance_vis'] 
+                                + float(params_df_ticker['params_ib'].iloc[0]) * OI_df['order_imbalance_ib'] 
+                                + float(params_df_ticker['params_hid'].iloc[0]) * OI_df['order_imbalance_hid'])
+
+        signal_df['signal'] += (float(params_df_ticker['params_SMB'].iloc[0]) * OI_df['SMB'] 
+                                + float(params_df_ticker['params_HML'].iloc[0]) * OI_df['HML'] 
+                                + float(params_df_ticker['params_RF'].iloc[0]) * OI_df['RF'] 
+                                + float(params_df_ticker['params_CMA'].iloc[0]) * OI_df['CMA']
+                                + float(params_df_ticker['params_RMW'].iloc[0]) * OI_df['RMW']  
+                                )
+        signal_df['ticker'] = ticker
+
+        folder_path = f'/nfs/home/jingt/dissertation-iceberg/data/trading_strat/ClOp_{order_type}'
+        file_name = f'ClOp_{ticker}.csv'
+        save_dataframe_to_folder(signal_df, folder_path, file_name)
+
+        break
+
