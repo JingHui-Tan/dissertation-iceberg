@@ -13,79 +13,14 @@ import os
 import logging
 from scipy.linalg import inv
 import gc
+import statsmodels.api as sm
 
 
+
+from ClOp_calc import lm_analysis_ClOp
 from prediction_ML_pipeline import data_preprocessing, prediction_feature, add_date_ticker, extract_info_from_filename, hid_outside_spread_tag
 from order_imbalance import order_imbalance, combined_order_imbalance, conditional_order_imbalance, iceberg_order_imbalance
 
-
-
-# def process_and_train_xgb(archive_path, model_path, params, num_boost_round=10, chunk_size=20000):
-#     """
-#     Extract 7z file, process CSVs in chunks, and train HistGradientBoostingClassifier.
-#     """
-    
-#     # Lists to accumulate validation predictions and true labels
-#     all_preds = []
-#     all_labels = []
-
-#     with py7zr.SevenZipFile(archive_path, mode='r') as archive:
-#         filenames = archive.getnames()
-#         orderbook_files = [f for f in filenames if 'orderbook' in f]
-#         message_files = [f for f in filenames if 'message' in f]
-#         # Process matching orderbook and message files
-#         for orderbook_file, message_file in zip(orderbook_files, message_files):
-#             extracted_files = archive.read([orderbook_file, message_file])
-#             orderbook_stream = io.BytesIO(extracted_files[orderbook_file].read())
-#             message_stream = io.BytesIO(extracted_files[message_file].read())
-#             print("Processed files:", orderbook_file, message_file)
-
-#             orderbook_iter = pd.read_csv(orderbook_stream, chunksize=chunk_size, usecols=[0, 1, 2, 3])
-#             message_iter = pd.read_csv(message_stream, chunksize=chunk_size, usecols=[0, 1, 2, 3, 4, 5])
-#             ticker, date = extract_info_from_filename(message_file)
-
-#             for orderbook_chunk, message_chunk in zip(orderbook_iter, message_iter):
-#                 # Merge the two chunks on a common key, adjust key names if necessary
-#                 message_chunk = add_date_ticker(message_chunk, date, ticker)
-#                 message_chunk, orderbook_chunk = data_preprocessing(message_chunk, orderbook_chunk, ticker_name=ticker)
-#                 X, y = prediction_feature(message_chunk, orderbook_chunk, labelled=True, standardise=True)
-#                 # Map classes from -1 to 0
-#                 y = y.replace(-1, 0)
-#                 y = y.astype(int)
-
-
-#                 # Split each chunk into training and validation sets
-#                 X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2)
-                
-#                 dtrain_chunk = xgb.DMatrix(X_train, label=y_train, enable_categorical=True)
-#                 dval_chunk = xgb.DMatrix(X_val, label=y_val, enable_categorical=True)
-
-#                 evals = [(dtrain_chunk, 'train'), (dval_chunk, 'eval')]
-
-#                 # Update model with new chunk
-#                 if 'booster' in locals():
-#                     booster = xgb.train(params, dtrain_chunk, num_boost_round, evals, xgb_model=booster)
-#                 else:
-#                     booster = xgb.train(params, dtrain_chunk, num_boost_round, evals)
-    
-#                 # Predict on the validation set for the current chunk
-#                 preds = booster.predict(dval_chunk)
-#                 preds = (preds > 0.5).astype(int)  # Thresholding for binary classification
-
-#                 # Accumulate predictions and true labels
-#                 all_preds.extend(preds)
-#                 all_labels.extend(y_val)
-
-#     # Compute overall accuracy
-#     overall_accuracy = accuracy_score(all_labels, all_preds)
-#     print(f"Overall Accuracy: {overall_accuracy}")
-
-#     # print(f"Overall Accuracy: {test_correct / test_count}")
-#     # Save the final model to the specified folder
-#     model_path = os.path.join(model_path, 'xgboost_model.json')
-#     booster.save_model(model_path)
-
-#     return booster
 
 
 def process_and_train_xgb(archive_path, model_path, model_name, params,
@@ -102,7 +37,7 @@ def process_and_train_xgb(archive_path, model_path, model_name, params,
         filenames = archive.getnames()
         orderbook_files = [f for f in filenames if 'orderbook' in f]
         message_files = [f for f in filenames if 'message' in f]
-        # Process matching orderbook and message files
+        # Process matching orderbook and message files for each trading day
         for orderbook_file, message_file in zip(orderbook_files, message_files):
             extracted_files = archive.read([orderbook_file, message_file])
             orderbook_stream = io.BytesIO(extracted_files[orderbook_file].read())
@@ -111,12 +46,19 @@ def process_and_train_xgb(archive_path, model_path, model_name, params,
 
             orderbook_chunk = pd.read_csv(orderbook_stream, header=None, usecols=[0, 1, 2, 3])
             message_chunk = pd.read_csv(message_stream, header=None, usecols=[0, 1, 2, 3, 4, 5])
+
+            # Obtain date and ticker info from df
             ticker, date = extract_info_from_filename(message_file)
 
+            # Clean dataframe and add ticker, date info
             message_chunk = add_date_ticker(message_chunk, date, ticker)
 
+            # Preprocess dataframes
             message_chunk, orderbook_chunk = data_preprocessing(message_chunk, orderbook_chunk, ticker_name=ticker)
+
+            # Obtain features for prediction using dfs
             X, y = prediction_feature(message_chunk, orderbook_chunk, labelled=True, standardise=True)
+
             # Map classes from -1 to 0
             y = y.replace(-1, 0)
             y = y.astype(int)
@@ -129,7 +71,7 @@ def process_and_train_xgb(archive_path, model_path, model_name, params,
 
             evals = [(dtrain_chunk, 'train'), (dval_chunk, 'eval')]
 
-            # Update model with new chunk
+            # Update model with new chunk for partial fitting
             if 'booster' in locals():
                 booster = xgb.train(params, dtrain_chunk, num_boost_round, evals, xgb_model=booster)
             else:
@@ -154,11 +96,6 @@ def process_and_train_xgb(archive_path, model_path, model_name, params,
     return booster, overall_accuracy
 
 
-
-## Usage
-# archive_path = 'yourfile.7z'
-# model = process_and_train_hist_gb(archive_path)
-
 def order_imbalance_calc(archive_path, delta_lst, model=None,
                          model_path=None, model_name=None, order_type='combined',
                          specific_date=None, ticker=None):
@@ -173,10 +110,12 @@ def order_imbalance_calc(archive_path, delta_lst, model=None,
 
     df_dict = {key: [] for key in delta_lst}
     
+    # Filter for specific date if specified
     if specific_date:
         year = specific_date[:4]
         archive_path = f"/nfs/data/lobster_data/lobster_raw/2017-19/_data_dwn_32_302__{ticker}_{year}-01-01_{year}-12-31_10.7z"
 
+    # Obtain messages and orderbook dataframe for each trading day
     with py7zr.SevenZipFile(archive_path, mode='r') as archive:
         filenames = archive.getnames()
         if not specific_date:
@@ -188,6 +127,7 @@ def order_imbalance_calc(archive_path, delta_lst, model=None,
             message_files = [f for f in filenames if 'message' in f and specific_date in f]
 
         for orderbook_file, message_file in zip(orderbook_files, message_files):
+
             extracted_files = archive.read([orderbook_file, message_file])
             orderbook_stream = io.BytesIO(extracted_files[orderbook_file].read())
             message_stream = io.BytesIO(extracted_files[message_file].read())
@@ -196,12 +136,15 @@ def order_imbalance_calc(archive_path, delta_lst, model=None,
             # Read the entire CSV files
             orderbook_df = pd.read_csv(orderbook_stream, header=None, usecols=[0, 1, 2, 3])
             message_df = pd.read_csv(message_stream, header=None, usecols=[0, 1, 2, 3, 4, 5])
-
             ticker, date = extract_info_from_filename(message_file)
 
             # Process data for prediction
             message_df = add_date_ticker(message_df, date, ticker)
             message_df, orderbook_df = data_preprocessing(message_df, orderbook_df, ticker_name=ticker)
+
+            if message_df.empty:
+                continue
+
             X = prediction_feature(message_df, orderbook_df, labelled=False, standardise=True)
     
             # Convert the data to DMatrix
@@ -220,8 +163,13 @@ def order_imbalance_calc(archive_path, delta_lst, model=None,
             # Tag direction of hidden liquidity execution outside of bid-ask spread
             y_pred_df = hid_outside_spread_tag(X, y_pred_df)
 
+            # Calculate OI for each delta in delta_lst
             for delta in delta_lst:
-                if order_type == 'vis' or order_type == 'hid' or order_type == 'combined':
+                if order_type == 'vis' or order_type == 'hid' or order_type == 'all':
+                    df_merged = order_imbalance(message_df, y_pred_df, orderbook_df, delta=delta)
+                    df_merged.rename(columns={'order_imbalance': f'order_imbalance_{order_type}'}, inplace=True)
+                
+                elif order_type == 'combined':
                     df_merged = combined_order_imbalance(message_df, y_pred_df, orderbook_df, delta=delta)
 
                 elif order_type == 'comb_iceberg':
@@ -229,119 +177,17 @@ def order_imbalance_calc(archive_path, delta_lst, model=None,
 
                 elif order_type == 'agg' or order_type == 'size':
                     df_merged = conditional_order_imbalance(message_df, y_pred_df, orderbook_df, delta=delta, condition=order_type)
+                
                 df_dict[delta].append(df_merged)
+                
     # Concatenate the DataFrames for each key
     for key in df_dict:
-        df_dict[key] = pd.concat(df_dict[key])
-
+        if df_dict[key]:  # Check if the list associated with the key is not empty
+            df_dict[key] = pd.concat(df_dict[key])
+        else:
+            df_dict[key] = pd.DataFrame()
     return df_dict
 
-# # Function to yield chunks of data
-# def get_data_in_chunks(df, chunk_size=100):
-#     for start in range(0, df.shape[0], chunk_size):
-#         end = min(start + chunk_size, df.shape[0])
-#         yield df.iloc[start:end]
-
-
-# def calculate_t_values(model, X, y):
-#     # Assuming we fit the model on the entire dataset to calculate residuals
-#     y_pred = model.predict(X)
-#     residuals = y - y_pred
-#     residual_sum_of_squares = np.sum(residuals**2)
-
-#     # Calculate the variance of the residuals
-#     degrees_of_freedom = X.shape[0] - X.shape[1] - 1
-#     variance_of_residuals = residual_sum_of_squares / degrees_of_freedom
-
-#     # Calculate the standard errors of the coefficients
-#     X_with_intercept = np.column_stack((np.ones(X.shape[0]), X))
-#     covariance_matrix = variance_of_residuals * np.linalg.inv(np.dot(X_with_intercept.T, X_with_intercept))
-#     standard_errors = np.sqrt(np.diag(covariance_matrix)[1:])
-
-#     # Calculate t-values
-#     t_values = model.coef_ / standard_errors
-
-#     return t_values
-
-
-# def lm_analysis(df, order_type='combined', predictive=True, weighted_mp=False,
-#                 momentum=False):
-    
-#     if weighted_mp==False:
-#         output = "fut_log_ret" if predictive else "log_ret"
-#     else:
-#         output = 'fut_weighted_log_ret' if predictive else "weighted_log_ret"    
-
-#     # Initialize the SGDRegressor
-#     sgd_reg = SGDRegressor(max_iter=1000, tol=1e-3)
-
-#     # Fit the model in chunks
-#     coefficients_dict = {
-#         'vis': ['order_imbalance_vis'],
-#         'hid': ['order_imbalance_hid'],
-#         'combined': ['order_imbalance_vis', 'order_imbalance_hid'],
-#         'comb_iceberg': ['order_imbalance_vis', 'order_imbalance_hid', 'order_imbalance_ib'],
-#         'size': ['order_imbalance_vis', 'order_imbalance_small', 
-#                  'order_imbalance_medium', 'order_imbalance_large'],
-#         'agg': ['order_imbalance_vis', 'order_imbalance_agg_low',
-#                 'order_imbalance_agg_mid', 'order_imbalance_agg_high']
-#     }
-
-#     X_coefficients = coefficients_dict[order_type]
-#     num_values = int(len(X_coefficients))
-
-#     if momentum and weighted_mp:
-#         X_coefficients += ['weighted_log_ret']
-    
-#     elif momentum and not weighted_mp:
-#         X_coefficients += ['log_ret']
-
-#     for chunk in get_data_in_chunks(df, chunk_size=100):
-#         X_chunk = chunk[X_coefficients].values
-#         y_chunk = chunk[output].values
-#         sgd_reg.partial_fit(X_chunk, y_chunk)
-
-#     X = df[X_coefficients]
-#     y = df[output]
-#     print("Model fit completed")
-#     coefficients = sgd_reg.coef_
-#     t_values = calculate_t_values(sgd_reg, X, y)
-
-#     return coefficients[:num_values].tolist(), t_values[:num_values].tolist()
-    
-
-# def OI_results(df_dict, order_type='combined', predictive=True, weighted_mp=False,
-#                 momentum=False):
-#     lm_results = []
-
-#     col_names_dict = {
-#         'vis': ['timeframe', 'params_vis', 'tvals_vis'],
-#         'hid': ['timeframe', 'params_hid', 'tvals_hid'],
-#         'combined': ['timeframe', 'params_vis', 'tvals_vis', 'params_hid', 'tvals_hid'],
-#         'comb_iceberg': ['timeframe', 'params_vis', 'tvals_vis', 'params_hid',
-#                          'tvals_hid', 'params_ib', 'tvals_ib'],
-#         'agg': ['timeframe', 'params_vis', 'tvals_vis', 'params_hid', 'tvals_hid',
-#                 'params_low', 'tvals_low', 'params_mid', 'tvals_mid', 'params_high', 'tvals_high'],
-#         'size': ['timeframe', 'params_vis', 'tvals_vis', 'params_hid', 'tvals_hid',
-#                  'params_small', 'tvals_small', 'params_mid', 'tvals_mid', 'params_large', 'tvals_large']
-
-#     }
-
-#     for delta in df_dict:
-#         print(f'Currently fitting for delta: {delta}')
-#         row_result = [delta]
-#         # Need to be in the form of lists
-#         coefficients, t_values = lm_analysis(df_dict[delta], order_type=order_type, 
-#                                              predictive=predictive, weighted_mp=weighted_mp, momentum=momentum)
-
-#         for coef, t_val in zip(coefficients, t_values):
-#             row_result += [coef]
-#             row_result += [t_val]
-        
-#         lm_results.append(row_result)
-#     print(lm_results)
-    
-#     return pd.DataFrame(lm_results, columns=col_names_dict[order_type])
 
 
 # Configure logging
@@ -362,6 +208,7 @@ def calculate_t_values_adj_R2(model, df, X_coefficients, output, chunk_size=100)
     total_sum_of_squares = 0
 
     for chunk in get_data_in_chunks(df, chunk_size):
+        # Compute RSS for current chunk
         X_chunk = chunk[X_coefficients].fillna(0).replace(-np.inf, 0).replace(np.inf, 0).values
         y_chunk = chunk[output].fillna(0).replace(-np.inf, 0).values
         y_chunk_pred = model.predict(X_chunk)
@@ -398,7 +245,7 @@ def calculate_t_values_adj_R2(model, df, X_coefficients, output, chunk_size=100)
 
 def lm_analysis(df, order_type='combined', predictive=True, ret_type='log_ret',
                 momentum=False):
-    
+    '''Compute linear regression coefficients using SGD for specified return and order type'''
     if ret_type == 'log_ret':
         output = "fut_log_ret" if predictive else "log_ret"
     
@@ -411,7 +258,7 @@ def lm_analysis(df, order_type='combined', predictive=True, ret_type='log_ret',
     elif ret_type == 'tClose':
         output = "fret_tClose" if predictive else "ret_tClose"
     
-    elif ret_type == 'ClOp' or ret_type == 'ClCl' or ret_type == 'ClOp_ex' or ret_type == 'ClCl_ex':
+    elif ret_type == 'ClOp' or ret_type == 'ClCl' or ret_type == 'ClOp_ex' or ret_type == 'ClCl_ex' or ret_type == 'adjClOp':
         output = f"fret_{ret_type}"
 
     elif ret_type == 'daily_ret' or ret_type == 'daily_ret_ex':
@@ -424,6 +271,7 @@ def lm_analysis(df, order_type='combined', predictive=True, ret_type='log_ret',
     coefficients_dict = {
         'vis': ['order_imbalance_vis'],
         'hid': ['order_imbalance_hid'],
+        'all': ['order_imbalance_all'],
         'combined': ['order_imbalance_vis', 'order_imbalance_hid'],
         'comb_iceberg': ['order_imbalance_vis', 'order_imbalance_hid', 'order_imbalance_ib'],
         'size': ['order_imbalance_vis', 'order_imbalance_small', 
@@ -433,6 +281,9 @@ def lm_analysis(df, order_type='combined', predictive=True, ret_type='log_ret',
     }
 
     X_coefficients = coefficients_dict[order_type]
+
+    X_coefficients += ['SMB', 'HML', 'RF', 'CMA', 'RMW']
+
 
     if momentum and ret_type == 'weighted_mp':
         X_coefficients += ['weighted_log_ret']
@@ -448,7 +299,27 @@ def lm_analysis(df, order_type='combined', predictive=True, ret_type='log_ret',
     
     elif momentum and (ret_type == 'daily_ret' or ret_type == 'daily_ret_ex'):
         X_coefficients += [f'{ret_type}']
+    
+    elif momentum and ret_type == 'ClOp':
+        X_coefficients += ['ClOp']
 
+    # Using linear regression
+    # X = df[X_coefficients].fillna(0).replace(-np.inf, 0).replace(np.inf, 0)
+    # y = df[output].fillna(0).replace(-np.inf, 0).replace(np.inf, 0)
+
+    # X = sm.add_constant(X)
+    # model = sm.OLS(y, X).fit()
+
+    # intercept = model.params[0]
+    # coefficients = model.params[1:]
+
+    # t_values = model.tvalues[1:]
+    # adj_r2 = model.rsquared_adj
+
+
+    # return intercept, coefficients.tolist(), t_values.tolist(), adj_r2
+
+    # Use SGD to obtain coefficients
     for chunk in get_data_in_chunks(df, chunk_size=40):
         try:            
             X_chunk = chunk[X_coefficients].fillna(0).replace(-np.inf, 0).replace(np.inf, 0).values
@@ -481,11 +352,13 @@ def lm_analysis(df, order_type='combined', predictive=True, ret_type='log_ret',
 
 def OI_results(df_dict, order_type='combined', predictive=True, ret_type='log_ret',
                 momentum=False):
+    # Build dataframe for regression using coefficients obtained from lm_analysis
     lm_results = []
 
     col_names_dict = {
         'vis': ['timeframe', 'intercept', 'adj_R2', 'params_vis', 'tvals_vis'],
         'hid': ['timeframe', 'intercept', 'adj_R2', 'params_hid', 'tvals_hid'],
+        'all': ['timeframe', 'intercept', 'adj_R2', 'params_all', 'tvals_all'],
         'combined': ['timeframe', 'intercept', 'adj_R2', 'params_vis', 'tvals_vis', 'params_hid', 'tvals_hid'],
         'comb_iceberg': ['timeframe', 'intercept', 'adj_R2', 'params_vis', 'tvals_vis', 'params_hid',
                          'tvals_hid', 'params_ib', 'tvals_ib'],
@@ -498,12 +371,17 @@ def OI_results(df_dict, order_type='combined', predictive=True, ret_type='log_re
     logging.info("Process started")
     logging.debug(f"DataFrames in df_dict: {list(df_dict.keys())}")
     
+    # Compute linear regression type depending on daily or intraday delta
     for delta in df_dict:
         logging.info(f'Currently fitting for delta: {delta}')
         row_result = [delta]
         try:
-            intercept, coefficients, t_values, adj_r2 = lm_analysis(df_dict[delta], order_type=order_type, 
-                                                 predictive=predictive, ret_type=ret_type, momentum=momentum)
+            if delta != 'daily':
+                intercept, coefficients, t_values, adj_r2 = lm_analysis(df_dict[delta], order_type=order_type, 
+                                                    predictive=predictive, ret_type=ret_type, momentum=momentum)
+            
+            else:
+                intercept, coefficients, t_values, adj_r2 = lm_analysis_ClOp(df_dict[delta], order_type=order_type)
 
             row_result += [intercept]
             row_result += [adj_r2]
@@ -520,7 +398,13 @@ def OI_results(df_dict, order_type='combined', predictive=True, ret_type='log_re
     logging.info("Process completed")
     logging.debug(f"LM Results: {lm_results}")
 
+    # Build dataframe
     col_names = col_names_dict[order_type]
+    col_names += ['params_SMB', 'tvals_SMB',
+                    'params_HML', 'tvals_SMB',
+                    'params_RF', 'tvals_RF',
+                    'params_CMA', 'tvals_CMA',
+                    'params_RMW', 'tvals_RMW']
     if momentum:
         col_names += ['params_momentum', 'tvals_momentum']
 
