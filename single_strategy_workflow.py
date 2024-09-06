@@ -15,17 +15,19 @@ def main():
                   'MHK', 'NWSA', 'PNW', 'RL', 'TAP', 'WYNN']
 
 
-    testing_year = "2019"
+    testing_year = "2018"
     params_year = "2018"
-    order_type = 'combined'
+    order_type = 'all'
     ret_type = "log_ret_ex"
     params_file_name = "all_log_ret_ex_2018_v2.csv"
+    momentum = True
 
     delta = '2min'
+    prev_days = 3
     pos_threshold = 0
     neg_threshold = 0
-    result_path = "/nfs/home/jingt/dissertation-iceberg/data/output_results/strategy_results"
-    file_name = "all_strat_single_combined_log_ret_ex_update_2min.csv"
+    result_path = "/nfs/home/jingt/dissertation-iceberg/data/trading_strat"
+    file_name = "single_2018_all_2min.csv"
 
     ## ------------------------------------
 
@@ -63,7 +65,7 @@ def main():
         start = time.time()
         print(f"Calculating for ticker {ticker}", flush=True)
         df_final, result_final_unweighted, result_final_weighted = combined_strategy_function(ticker, delta, order_type, ret_type, model_path, 
-                                                pos_threshold=0, neg_threshold=0, weighted=False, momentum=False, year=2019, 
+                                                prev_days=prev_days, pos_threshold=0, neg_threshold=0, weighted=False, momentum=momentum, year=testing_year, 
                                                 use_update_strategy=True, params_df=None)
 
         df_final['final_PnL_weighted'] = result_final_weighted
